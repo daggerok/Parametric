@@ -1,0 +1,179 @@
+{
+  "chart": {
+    "result": [
+      {
+        "meta": {
+          "currency": "USD",
+          "symbol": "PHEQ",
+          "exchangeName": "PCX",
+          "fullExchangeName": "NYSEArca",
+          "instrumentType": "ETF",
+          "firstTradeDate": 1697722200,
+          "regularMarketTime": 1790884728,
+          "hasPrePostMarketData": true,
+          "gmtoffset": -14400,
+          "timezone": "EDT",
+          "exchangeTimezoneName": "America/New_York",
+          "regularMarketPrice": 35.356,
+          "regularMarketChangePercent": -0.1107,
+          "fulldayPrice": 35.356,
+          "fulldayChange": -0.0392,
+          "fulldayChangePercent": -0.1107,
+          "fiftyTwoWeekHigh": 40.19,
+          "fiftyTwoWeekLow": 29.54,
+          "regularMarketDayHigh": 35.4698,
+          "regularMarketDayLow": 35.22,
+          "regularMarketVolume": 70027,
+          "longName": "Parametric Hedged Equity ETF",
+          "shortName": "Parametric Hedged Equity ETF",
+          "chartPreviousClose": 24.9,
+          "priceHint": 2,
+          "currentTradingPeriod": {
+            "pre": {
+              "timezone": "EDT",
+              "start": 1790841600,
+              "end": 1790861400,
+              "gmtoffset": -14400
+            },
+            "regular": {
+              "timezone": "EDT",
+              "start": 1790861400,
+              "end": 1790884800,
+              "gmtoffset": -14400
+            },
+            "post": {
+              "timezone": "EDT",
+              "start": 1790884800,
+              "end": 1790899200,
+              "gmtoffset": -14400
+            }
+          },
+          "dataGranularity": "1wk",
+          "range": "max",
+          "validRanges": [
+            "1d",
+            "5d",
+            "1mo",
+            "3mo",
+            "6mo",
+            "1y",
+            "2y",
+            "5y",
+            "ytd",
+            "max"
+          ]
+        },
+        "timestamp": [
+          1785729600,
+          1786334400,
+          1786939200,
+          1787544000,
+          1788148800,
+          1788753600,
+          1789358400,
+          1789963200,
+          1790568000,
+          1790884728
+        ],
+        "indicators": {
+          "quote": [
+            {
+              "close": [
+                35.05500030517578,
+                35.16999816894531,
+                35.1150016784668,
+                35.20399856567383,
+                35.41999816894531,
+                35.30500030517578,
+                35.38999938964844,
+                35.4900016784668,
+                35.39500045776367,
+                35.35599899291992
+              ],
+              "volume": [
+                58500,
+                206800,
+                192700,
+                53000,
+                52600,
+                104300,
+                110700,
+                111200,
+                37800,
+                70027
+              ]
+            }
+          ],
+          "adjclose": [
+            {
+              "adjclose": [
+                35.006465911865234,
+                35.12130355834961,
+                35.066383361816406,
+                35.15525817871094,
+                35.37095642089844,
+                35.25611877441406,
+                35.340999603271484,
+                35.4900016784668,
+                35.39500045776367,
+                35.35599899291992
+              ]
+            }
+          ]
+        },
+        "events": {
+          "dividends": {
+            "1702875600": {
+              "amount": 0.449,
+              "date": 1702909800
+            },
+            "1710734400": {
+              "amount": 0.049,
+              "date": 1710768600
+            },
+            "1719201600": {
+              "amount": 0.091,
+              "date": 1719235800
+            },
+            "1727064000": {
+              "amount": 0.072,
+              "date": 1727098200
+            },
+            "1734930000": {
+              "amount": 0.2,
+              "date": 1734964200
+            },
+            "1742788800": {
+              "amount": 0.064,
+              "date": 1742823000
+            },
+            "1750651200": {
+              "amount": 0.075,
+              "date": 1750685400
+            },
+            "1758513600": {
+              "amount": 0.083,
+              "date": 1758547800
+            },
+            "1766379600": {
+              "amount": 0.165,
+              "date": 1766500200
+            },
+            "1774238400": {
+              "amount": 0.029,
+              "date": 1774272600
+            },
+            "1782100800": {
+              "amount": 0.047,
+              "date": 1782135000
+            },
+            "1789963200": {
+              "amount": 0.049,
+              "date": 1789997400
+            }
+          }
+        }
+      }
+    ]
+  }
+}
