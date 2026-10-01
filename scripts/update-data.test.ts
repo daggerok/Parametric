@@ -487,11 +487,7 @@ describe('repository configuration / Actions override precedence', () => {
 
   test('every canonical control is documented in the README', () => {
     const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-    for (const name of CONTROL_NAMES) {
-      const tenor = name.match(/^(PERFORMANCE|TOTAL_RETURN)_(1Y|3Y|5Y|10Y)$/);
-      expect(readme).toContain(tenor ? '`_' + tenor[2] + '`' : '`' + name + '`');
-      if (tenor) expect(readme).toContain('`' + tenor[1] + '_YTD`');
-    }
+    for (const name of CONTROL_NAMES) expect(readme).toContain('`' + name + '`');
     expect(readme).toContain('scripts/update-data.config.json');
   });
 });
