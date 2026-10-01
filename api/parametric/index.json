@@ -1,0 +1,9 @@
+{
+ "generatedAt": "2026-10-01T00:00:00Z",
+ "counts": { "funds": 3, "holdings": 0, "history": 0 },
+ "funds": [
+  { "ticker": "PAPI", "name": "Parametric Equity Premium Income ETF", "category": "US Equity", "categoryPath": "US Equity / Russell 1000 Value Index", "dataFile": "./funds/PAPI/meta.json", "holdings": 0, "history": 0, "metrics": {}, "returns": { "monthEnd": {} }, "distributions": { "frequency": "—" } },
+  { "ticker": "PHEQ", "name": "Parametric Hedged Equity ETF", "category": "US Equity", "categoryPath": "US Equity / S&P 500 Index", "dataFile": "./funds/PHEQ/meta.json", "holdings": 0, "history": 0, "metrics": {}, "returns": { "monthEnd": {} }, "distributions": { "frequency": "—" } },
+  { "ticker": "PEPS", "name": "Parametric Equity Plus ETF", "category": "US Equity", "categoryPath": "US Equity / S&P 500 Index", "dataFile": "./funds/PEPS/meta.json", "holdings": 0, "history": 0, "metrics": {}, "returns": { "monthEnd": {} }, "distributions": { "frequency": "—" } }
+ ]
+}
