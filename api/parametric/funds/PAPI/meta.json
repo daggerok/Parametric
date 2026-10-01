@@ -1,0 +1,270 @@
+{
+ "ticker": "PAPI",
+ "name": "Parametric Equity Premium Income ETF",
+ "category": "US Equity",
+ "categoryPath": "US Equity",
+ "source": {
+  "fundPage": "https://www.eatonvance.com/products/etfs/us-equity/parametric-equity-premium-income-etf.html",
+  "catalog": "https://www.eatonvance.com/products/etfs.html",
+  "yahooChart": "https://query1.finance.yahoo.com/v8/finance/chart/PAPI",
+  "holdingsSource": "previous run",
+  "historySource": "Yahoo Finance public chart API (adjusted close)",
+  "provider": "Eaton Vance / MSIM product pages + SEC EDGAR Form N-PORT-P (holdings) + Yahoo Finance public chart API (NAV history and dividends)"
+ },
+ "identifiers": {
+  "cusip": null,
+  "isin": null,
+  "indexTicker": null
+ },
+ "inception": {
+  "fundInceptionDate": null,
+  "inceptionDate": null,
+  "listingDate": null
+ },
+ "expense": {
+  "gross": null,
+  "net": null,
+  "display": "—",
+  "grossDisplay": null,
+  "netDisplay": null,
+  "asOf": "Oct 01 2026",
+  "source": "official Eaton Vance / MSIM product page (gross and net expense ratio)"
+ },
+ "nav": {
+  "display": "—",
+  "value": null,
+  "asOfDate": "2026-10-01",
+  "source": "previous run"
+ },
+ "marketPrice": {
+  "display": "$26.48",
+  "value": 26.48,
+  "asOfDate": "2026-10-01",
+  "source": "Yahoo Finance chart API (last close)"
+ },
+ "premiumDiscount": {
+  "display": "—",
+  "value": null,
+  "asOfDate": "2026-10-01",
+  "source": "previous run"
+ },
+ "bidAskSpread": {
+  "display": "—",
+  "value": null,
+  "asOfDate": "2026-10-01",
+  "source": "official Eaton Vance / MSIM product page (30-day median bid/ask spread)"
+ },
+ "aum": {
+  "display": "—",
+  "value": null,
+  "asOfDate": "—",
+  "source": "previous run"
+ },
+ "yields": {
+  "dividendYield": 8.02,
+  "dividendYieldText": "8.02%",
+  "dividendYieldKind": "indicated (latest distribution x payments per year / market price)",
+  "secYield": null,
+  "secYieldText": "—",
+  "secYieldKind": "not published by eatonvance.com for this fund"
+ },
+ "returns": {
+  "derivedFrom": "official Eaton Vance / MSIM published returns; month-to-date and history-derived periods use the Yahoo Finance adjusted series",
+  "monthEnd": {
+   "asOfDate": "Oct 01 2026",
+   "mo1": -4.34,
+   "mo1Text": "-4.34%",
+   "qtd": null,
+   "qtdText": "—",
+   "ytd": 8.84,
+   "ytdText": "8.84%",
+   "yr1": 9.88,
+   "yr1Text": "9.88%",
+   "yr3": null,
+   "yr3Text": "—",
+   "yr5": null,
+   "yr5Text": "—",
+   "yr10": null,
+   "yr10Text": "—",
+   "sinceInception": 10.09,
+   "sinceInceptionText": "10.09%"
+  },
+  "quarterEnd": {
+   "asOfDate": "Sep 30 2026",
+   "ytd": null,
+   "yr1": null,
+   "yr3": null,
+   "yr5": null,
+   "yr10": null,
+   "sinceInception": null
+  }
+ },
+ "distributions": {
+  "frequency": "Monthly",
+  "paymentsPerYear": 12,
+  "frequencyCode": null,
+  "headers": [
+   "Ex-Date",
+   "Amount"
+  ],
+  "rows": [
+   [
+    "11/30/2023",
+    "0.166"
+   ],
+   [
+    "12/21/2023",
+    "0.208"
+   ],
+   [
+    "01/31/2024",
+    "0.115"
+   ],
+   [
+    "02/29/2024",
+    "0.142"
+   ],
+   [
+    "03/28/2024",
+    "0.18"
+   ],
+   [
+    "04/30/2024",
+    "0.172"
+   ],
+   [
+    "05/31/2024",
+    "0.185"
+   ],
+   [
+    "06/28/2024",
+    "0.164"
+   ],
+   [
+    "07/31/2024",
+    "0.122"
+   ],
+   [
+    "08/30/2024",
+    "0.147"
+   ],
+   [
+    "09/30/2024",
+    "0.171"
+   ],
+   [
+    "10/31/2024",
+    "0.133"
+   ],
+   [
+    "11/29/2024",
+    "0.154"
+   ],
+   [
+    "12/23/2024",
+    "0.164"
+   ],
+   [
+    "01/31/2025",
+    "0.139"
+   ],
+   [
+    "02/28/2025",
+    "0.134"
+   ],
+   [
+    "03/31/2025",
+    "0.193"
+   ],
+   [
+    "04/30/2025",
+    "0.203"
+   ],
+   [
+    "05/30/2025",
+    "0.148"
+   ],
+   [
+    "06/30/2025",
+    "0.184"
+   ],
+   [
+    "07/31/2025",
+    "0.147"
+   ],
+   [
+    "08/29/2025",
+    "0.152"
+   ],
+   [
+    "09/30/2025",
+    "0.18"
+   ],
+   [
+    "10/31/2025",
+    "0.149"
+   ],
+   [
+    "11/28/2025",
+    "0.148"
+   ],
+   [
+    "12/23/2025",
+    "0.179"
+   ],
+   [
+    "01/30/2026",
+    "0.161"
+   ],
+   [
+    "02/27/2026",
+    "0.164"
+   ],
+   [
+    "03/31/2026",
+    "0.238"
+   ],
+   [
+    "04/30/2026",
+    "0.155"
+   ],
+   [
+    "05/29/2026",
+    "0.156"
+   ],
+   [
+    "06/30/2026",
+    "0.203"
+   ],
+   [
+    "07/31/2026",
+    "0.168"
+   ],
+   [
+    "08/31/2026",
+    "0.163"
+   ],
+   [
+    "09/30/2026",
+    "0.177"
+   ]
+  ]
+ },
+ "holdings": {
+  "pages": [],
+  "pageSize": 250,
+  "totalRows": 0,
+  "asOfDate": null,
+  "asOf": "—",
+  "source": "previous run"
+ },
+ "history": {
+  "pages": [
+   "history/001.json"
+  ],
+  "pageSize": 1000,
+  "totalRows": 740,
+  "asOf": "Oct 01 2026",
+  "source": "Yahoo Finance public chart API (adjusted close)"
+ }
+}
