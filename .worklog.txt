@@ -63,28 +63,26 @@ GitHub Personal Access Token: <PASTE_YOUR_TOKEN_HERE>
 ================================================================
 CURRENT STATE
 =============
-- Goal: Implement Parametric ETFs (Morgan Stanley / Eaton Vance) holdings-to-watchlist web application in daggerok/Parametric matching sibling parity (Bun-only, zero runtime dependencies, static client app + update-data feed).
-- Status: Researched & Baseline Initialized. Repository cloned, clean baseline verified (LICENSE + placeholder README), official ETF brand site researched, data endpoints discovered and verified live, SEC EDGAR CIK confirmed, and self-contained plan embedded. Ready for implementation.
+- Goal: Implement Parametric ETFs (Morgan Stanley / Eaton Vance) holdings-to-watchlist web application in daggerok/Parametric matching sibling parity (Bun-only, zero runtime dependencies, static client app + ./api/parametric update-data feed).
+- Status: Implementation in progress (session 2026-10-01). Reconciliation, closest-sibling analysis (`daggerok/Capital-Group`), `scripts/update-data.config.json` + 25-input GitHub Actions dispatch cap workaround design, and initial `fetch_page` live portal verification complete; runner probe pending.
 - Repository: https://github.com/daggerok/Parametric
-- Branch: main (feature branch feat/parametric-etfs to be created during implementation)
-- Pushed remote baseline: main branch with initialized .worklog.txt
+- Working branch: `arena/01a0f9b5-parametric` (SESSION-FIXED by the Arena environment, branched from `main` a477e9e990c84ab11e80501eaae98b85cdfa4f60). The plan's `feat/parametric-etfs` branch name is replaced by `arena/01a0f9b5-parametric`; the PR is opened from `arena/01a0f9b5-parametric` into `main`.
+- Last confirmed pushed SHA: a477e9e990c84ab11e80501eaae98b85cdfa4f60 (baseline on `main`; updated after each push in CHRONOLOGICAL JOURNAL below).
+- Closest sibling pinned for copy/parity (this session):
+  * Config/CI/updater reference: `daggerok/Capital-Group` @ `73922c59f6f9a722058b5305e537e8edac25f965` (named first in PART 2 as closest sibling; implements `scripts/update-data.config.json` + `CONTROL_NAMES` + `resolveControls(file, advanced, inputs, env)` + 24 individual `workflow_dispatch` inputs + 25th `advanced` JSON input workaround for GitHub Actions' 25-input cap, inherited from `daggerok/aberdeen` @ `10a6be3f5cab48aad80b52634e3bdd8123748f7d`).
+  * Shared UI/README baseline reference: `daggerok/Capital-Group` @ `73922c59f6f9a722058b5305e537e8edac25f965` / `daggerok/JPMorgan` @ `8ce0ddca58b5459dd7df98f22463fb31afa82f2b`.
 - Completed:
-  1. Cloned target repository and verified clean baseline state.
-  2. Conducted live research on official ETF issuer portal (https://www.eatonvance.com/products/etfs.html and https://www.morganstanley.com/im/en-us/financial-advisor/product-and-performance/etfs.html).
-  3. Discovered and verified data acquisition pathways (endpoints, holdings formats, WAF characteristics).
-  4. Confirmed SEC EDGAR Trust registrant and CIK (CONFIRMED: 'Morgan Stanley ETF Trust', CIK 0001676326 (filing series for PAPI, PHEQ, PEPS).).
-  5. Established closest sibling reference architecture (daggerok/Capital-Group or daggerok/Franklin (handling advisor-gated portals with verified SEC EDGAR N-PORT-P + Yahoo Finance data pipeline).).
-  6. Generated complete self-contained implementation plan (generic protocol + brand-specific specifications), eliminating any requirement for 00-generic.txt.
-  7. Committed initialized .worklog.txt into main branch.
+  1. Read `.prompt.txt` and all 823 lines of `.worklog.txt` in full chunks; reconciled against local Git, remote `origin/main` (`a477e9e`), and open PRs (none).
+  2. Surveyed closest siblings (`daggerok/Capital-Group`, `daggerok/Franklin`, `daggerok/aberdeen`, `daggerok/Xtrackers`, `daggerok/AAM`, `daggerok/Sprott`) for `scripts/update-data.config.json` usage, all workflows (`update-data.yml`, `checks.yml`, `pages.yml`, `dependabot.yml`), and the 25-max-parameters GitHub Actions `workflow_dispatch` workaround.
+  3. Live-verified via `fetch_page` that `https://www.eatonvance.com/products/etfs.html` and the three Parametric ETF product pages (`PAPI`, `PHEQ`, `PEPS`) return rich server-rendered HTML with daily NAV, market price, premium/discount, expense ratios (gross/net), performance tables (1M, 3M, YTD, 1Y, SI), full historical distributions tables, key facts (CUSIP, exchange, inception date, benchmark, total net assets $MM, 30-day SEC yield, distribution frequency), top 10 holdings, and internal product IDs (`100637` for PAPI, `100638` for PHEQ, `100678` for PEPS).
+  4. Confirmed sandbox egress constraint: direct TLS from bash to non-GitHub/non-npm hosts fails with `SSL_ERROR_SYSCALL`, so live provider payload capture and the mandatory two-pass live acceptance run are executed on GitHub Actions runners (using a temporary probe/acceptance workflow removed before opening the PR).
 - Next action:
-  1. The next implementing agent starts here: read this .worklog.txt completely.
-  2. Create feature branch `feat/parametric-etfs`.
-  3. Live-verify the site endpoints listed in PART 2 below.
-  4. Scaffold repo files from closest sibling (daggerok/Capital-Group or daggerok/Franklin (handling advisor-gated portals with verified SEC EDGAR N-PORT-P + Yahoo Finance data pipeline).): package.json, bun.lock, index.html, app.tsx, scripts/update-data.ts, scripts/update-data.test.ts, .github/workflows/update-data.yml, .github/dependabot.yml, and README.md.
-  5. Implement data updater matching verified endpoints and run offline tests (bun test scripts/update-data.test.ts).
-  6. Execute isolated acceptance runs (minimum 3 tickers), verify byte-stability across repeat runs.
-  7. Update .worklog.txt after each stage, commit with Conventional Commits, and push to feature branch.
-- Blockers: None. Ready for feature branch implementation.
+  1. Push Checkpoint 1 (`.prompt.txt`, `.worklog.txt`, and temporary `.github/workflows/probe.yml`) to `arena/01a0f9b5-parametric` and collect the captured provider payloads (Eaton Vance / MSIM HTML & JSON endpoints, SEC EDGAR CIK `0001676326` submissions & N-PORT-P XMLs for PAPI/PHEQ/PEPS, and Yahoo Finance chart JSONs).
+  2. Scaffold and implement `package.json`, `bun.lock`, `favicon.ico`, `.gitignore`, `scripts/update-data.config.json`, `scripts/update-data.ts`, `scripts/update-data.test.ts`, `index.html`, `app.tsx` (exact sibling copy with the 8 permitted substitutions + shared header/frequency rules).
+  3. Implement all workflows: `.github/workflows/update-data.yml` (25 inputs = 24 blank-default controls + `advanced` JSON override resolved via `resolveControls`), `.github/workflows/checks.yml` (offline tests + transpile build checks + `git diff --check`), `.github/workflows/pages.yml` (`main`-only GitHub Pages deploy), and `.github/dependabot.yml`.
+  4. Run the two-pass isolated live acceptance (`TICKERS="PAPI PHEQ PEPS" VERBOSE=1 bun scripts/update-data.ts`) on the GitHub Actions runner, verify byte-stability across repeat runs, publish the `api/parametric` feed and tracked acceptance evidence, and remove any temporary probe/acceptance workflow.
+  5. Complete `README.md` with full sibling parity, update GitHub repo metadata (description, homepage, topics), and open the PR from `arena/01a0f9b5-parametric` against `main`.
+- Blockers: None.
 
 AUTHORITY / USER AMENDMENTS
 ==========================
@@ -92,6 +90,10 @@ AUTHORITY / USER AMENDMENTS
 - User selected the first-prompt / recovery protocol.
 - User explicitly required eliminating external dependencies on 00-generic.txt; this file is 100% self-contained.
 - Secrets and tokens must never be persisted to repository files or Git configuration.
+- User amendment 2026-10-01 (this session):
+  1) Check the closest sibling (`daggerok/Capital-Group`) for how `scripts/update-data.config.json` was used and do the same, and implement all workflows (`update-data.yml`, `checks.yml`, `pages.yml`, `dependabot.yml`) plus the workaround for the 25 max parameters limit in GitHub Actions `workflow_dispatch` (`24` individual inputs + `advanced` JSON input resolved via `resolveControls`).
+  2) Complete the full implementation accordingly and open a PR.
+- Session branch constraint: Arena tracks this session on branch `arena/01a0f9b5-parametric`; all commits, pushes, and the PR must use `arena/01a0f9b5-parametric`.
 
 CHRONOLOGICAL JOURNAL
 =====================
@@ -819,4 +821,19 @@ REQUEST PACING & CONCURRENCY:
 
 REPORT BACK WHEN DONE:
   Report back whether official MSIM JSON endpoints can be accessed by passing role-selection cookies.
+
+### 2026-10-01 — Session start: reconciliation, closest-sibling analysis, config-file/workflow decisions, and initial live portal check
+- Read `.prompt.txt` and all 823 lines of `.worklog.txt` in full chunks; reconciled against local Git, remote `origin/main` (`a477e9e990c84ab11e80501eaae98b85cdfa4f60`), and open PRs (none).
+- Working branch is `arena/01a0f9b5-parametric` (session-pinned by Arena; replaces `feat/parametric-etfs`).
+- Inspected closest siblings named in PART 2 (`daggerok/Capital-Group` @ `73922c59f6f9a722058b5305e537e8edac25f965` and `daggerok/Franklin` @ `f549d2cc612f9a9bb7107ec55013eb29cb85806a`) as well as `daggerok/aberdeen` @ `10a6be3f5cab48aad80b52634e3bdd8123748f7d`, `daggerok/JPMorgan` @ `8ce0ddca58b5459dd7df98f22463fb31afa82f2b`, `daggerok/Xtrackers`, `daggerok/AAM`, and `daggerok/Sprott`.
+- Findings on `scripts/update-data.config.json` & GitHub Actions 25-input cap workaround (from `daggerok/Capital-Group` / `daggerok/aberdeen`):
+  * `scripts/update-data.config.json` stores all canonical updater controls as string defaults (`MAX_FETCHES`, `REQUEST_SLEEP`, `CONCURRENCY`, `AUM`, `TER`, `DIVIDEND_YIELD`, `SEC_YIELD`, `TICKERS`, `HOLDINGS_PAGE_SIZE`, `HISTORY_PAGE_SIZE`, `MAX_RETRIES`, `HISTORY_RANGE`, `STORE_RAW_DOWNLOADS`, `SEC_UA`, `SKIP_YAHOO`, `SKIP_ISSUER`, `EDGAR_FALLBACK`, `VERBOSE`, `CATALOG_URL`, `PERFORMANCE_YTD`, `PERFORMANCE_1Y`, `PERFORMANCE_3Y`, `PERFORMANCE_5Y`, `PERFORMANCE_10Y`, `TOTAL_RETURN_YTD`, `TOTAL_RETURN_1Y`, `TOTAL_RETURN_3Y`, `TOTAL_RETURN_5Y`, `TOTAL_RETURN_10Y`).
+  * `export const CONTROL_NAMES` allowlists all canonical controls; `export function resolveControls(file, advanced, inputs, env)` merges `file < advanced < nonblank individual dispatch inputs < environment (PARAMETRIC_<KEY> alias or <KEY>)`, validates scalar types, integer bounds, boolean strings, `HISTORY_RANGE`, and `min:max` filter ranges, and rejects newline/CR/NUL control characters to prevent `GITHUB_ENV` injection.
+  * Because GitHub Actions `workflow_dispatch` permits at most 25 inputs while the updater has >25 canonical controls, `.github/workflows/update-data.yml` defines 24 individual optional string inputs (`default: ""`, inheriting `scripts/update-data.config.json` when blank) plus a 25th `advanced` JSON input (`default: "{}"`, allowing overrides for any canonical control such as `VERBOSE`, `SEC_UA`, `STORE_RAW_DOWNLOADS`, `SKIP_ISSUER`, `CATALOG_URL`), resolved via `resolveControls` and written to `$GITHUB_ENV`.
+  * Complete workflow suite to ship: `.github/workflows/update-data.yml` (Sunday `0 0 * * 0` schedule + 25-input `workflow_dispatch`), `.github/workflows/checks.yml` (offline unit/parity tests + `bun build` transpile checks + `git diff --check`), `.github/workflows/pages.yml` (`main`-only GitHub Pages deployment of `index.html`, `app.tsx`, `favicon.ico`, `api/parametric`), and `.github/dependabot.yml` (monthly `bun` and `github-actions`).
+- Live portal check via `fetch_page`:
+  * `https://www.eatonvance.com/products/etfs.html` and `https://www.morganstanley.com/im/en-us/financial-advisor/products/etfs.html` return all 22 MSIM ETFs/ETPs including the 3 Parametric ETFs (`PAPI`, `PEPS`, `PHEQ`) with daily Market Price, NAV, Premium/Discount, 30-Day SEC Yield, Distribution Frequency, and Fact Sheet links.
+  * Product detail pages (`https://www.eatonvance.com/products/etfs/us-equity/parametric-equity-premium-income-etf.html` for `PAPI` [ID `100637`, CUSIP `61774R866`], `.../parametric-hedged-equity-etf.html` for `PHEQ` [ID `100638`, CUSIP `61774R874`], `.../parametric-equity-plus-etf.html` for `PEPS` [ID `100678`, CUSIP `61774R775`]) are server-rendered with Pricing & Expenses (Gross/Net TER, Bid/Ask Spread), Returns (1M, 3M, YTD, 1Y, SI for Market Price & NAV), full Distributions history, Key Facts (Asset Class, CUSIP, Exchange, Inception Date, Benchmark, Total Net Assets $MM), and Top 10 Holdings.
+- Sandbox egress constraint: direct bash TLS to external non-GitHub/non-npm domains fails with `SSL_ERROR_SYSCALL`. Installed `bun@1.4.2` globally via npm. Added temporary `.github/workflows/probe.yml` (to be deleted before opening the PR) to capture raw HTML/JSON from `eatonvance.com`/`morganstanley.com`, SEC EDGAR `CIK0001676326` submissions + N-PORT-P XMLs, and Yahoo Finance chart responses on a GitHub Actions runner.
+
 

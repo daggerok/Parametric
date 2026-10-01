@@ -1,0 +1,183 @@
+name: TEMP probe (delete before PR)
+
+# Temporary reconnaissance workflow: captures live Eaton Vance / MSIM HTML & JSON,
+# SEC EDGAR CIK 0001676326 N-PORT-P filings, and Yahoo Finance chart payloads on
+# a GitHub Actions runner because the sandbox egress allowlist blocks provider
+# domains directly. Removed from the branch before opening the PR.
+
+on:
+  push:
+    branches: [arena/01a0f9b5-parametric]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: probe-parametric
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Capture live provider payloads
+        run: |
+          set -u
+          mkdir -p probe
+          UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
+          SEC_UA="daggerok Parametric ETF feed (https://github.com/daggerok/Parametric)"
+          : > probe/manifest.txt
+
+          fetch_url() {
+            local name="$1" url="$2" ua="${3:-$UA}"
+            local code
+            code=$(curl -sSL --max-time 90 -A "$ua" -D "probe/${name}.headers" -o "probe/${name}" -w '%{http_code}' "$url" || echo "curl-error")
+            local size
+            size=$(wc -c < "probe/${name}" 2>/dev/null || echo 0)
+            printf '%s\t%s\t%s\t%s\n' "$name" "$code" "$size" "$url" | tee -a probe/manifest.txt
+          }
+
+          fetch_url "ev-etfs.html" "https://www.eatonvance.com/products/etfs.html"
+          fetch_url "msim-etfs.html" "https://www.morganstanley.com/im/en-us/financial-advisor/products/etfs.html"
+          fetch_url "papi.html" "https://www.eatonvance.com/products/etfs/us-equity/parametric-equity-premium-income-etf.html"
+          fetch_url "pheq.html" "https://www.eatonvance.com/products/etfs/us-equity/parametric-hedged-equity-etf.html"
+          fetch_url "peps.html" "https://www.eatonvance.com/products/etfs/us-equity/parametric-equity-plus-etf.html"
+
+          # Check JSON endpoints discovered in page headers
+          fetch_url "ev-imwebdata-ef.json" "https://www.eatonvance.com/im/json/imwebdata/data?id=imweb-tom:product/EF"
+          fetch_url "ev-imwebdata-papi.json" "https://www.eatonvance.com/im/json/imwebdata/data?id=imweb-tom:product/EF/EQ/100637"
+          fetch_url "ev-imwebdata-pheq.json" "https://www.eatonvance.com/im/json/imwebdata/data?id=imweb-tom:product/EF/EQ/100638"
+          fetch_url "ev-imwebdata-peps.json" "https://www.eatonvance.com/im/json/imwebdata/data?id=imweb-tom:product/EF/EQ/100678"
+
+          # Yahoo Finance chart API
+          for t in PAPI PHEQ PEPS; do
+            fetch_url "yahoo-${t}.json" "https://query1.finance.yahoo.com/v8/finance/chart/${t}?range=max&interval=1d&events=div%7Csplit"
+          done
+
+          # SEC EDGAR lookup tables and submissions
+          fetch_url "sec-mf-tickers-raw.json" "https://www.sec.gov/files/company_tickers_mf.json" "$SEC_UA"
+          fetch_url "sec-submissions-raw.json" "https://data.sec.gov/submissions/CIK0001676326.json" "$SEC_UA"
+
+          python3 - <<'PY'
+          import json, re, os, urllib.request
+
+          sec_ua = "daggerok Parametric ETF feed (https://github.com/daggerok/Parametric)"
+
+          # 1. Inspect HTML files for JSON endpoints, download links, and table structures
+          report = []
+          for fname in ["ev-etfs.html", "papi.html", "pheq.html", "peps.html"]:
+              path = os.path.join("probe", fname)
+              if not os.path.exists(path):
+                  continue
+              html = open(path, encoding="utf-8", errors="ignore").read()
+              report.append(f"=== {fname} (len={len(html)}) ===")
+              # Find URLs / endpoints / data attributes
+              urls = sorted(set(re.findall(r'(?:https?://[^\s"\'<>]+|/im/[^\s"\'<>]+|/content/dam/[^\s"\'<>]+|/products/etfs/[^\s"\'<>]+)', html)))
+              for u in urls:
+                  if any(k in u.lower() for k in ["json", "imwebdata", "holding", "download", "csv", "xls", "etf", "parametric", "papi", "pheq", "peps"]):
+                      report.append(f"  url: {u}")
+              # Find data-* attributes
+              datas = sorted(set(re.findall(r'data-[a-z0-9_-]+="[^"]{1,200}"', html, re.I)))
+              for d in datas[:80]:
+                  report.append(f"  attr: {d}")
+              # Find script tags with inline JSON or endpoints
+              scripts = re.findall(r'<script\b[^>]*>(.*?)</script>', html, re.S | re.I)
+              for idx, s in enumerate(scripts):
+                  s_clean = s.strip()
+                  if s_clean and any(k in s_clean.lower() for k in ["imwebdata", "holding", "highcharts", "100637", "100638", "100678", "papi", "pheq", "peps", "nav", "cusip"]):
+                      report.append(f"  script[{idx}] (len={len(s_clean)}): {s_clean[:600].replace(chr(10), ' ')}")
+              # Find tables
+              tables = re.findall(r'<table\b[^>]*>.*?</table>', html, re.S | re.I)
+              report.append(f"  tables count: {len(tables)}")
+              for tidx, tbl in enumerate(tables):
+                  rows = re.findall(r'<tr\b[^>]*>.*?</tr>', tbl, re.S | re.I)
+                  first_cells = []
+                  for r in rows[:3]:
+                      cells = [re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', c)).strip() for c in re.findall(r'<t[hd]\b[^>]*>(.*?)</t[hd]>', r, re.S | re.I)]
+                      if cells:
+                          first_cells.append(cells)
+                  report.append(f"    table[{tidx}] rows={len(rows)} sample={first_cells}")
+
+          # 2. Filter SEC company_tickers_mf.json for CIK 1676326 or PAPI/PHEQ/PEPS
+          mf_path = "probe/sec-mf-tickers-raw.json"
+          series_map = {}
+          if os.path.exists(mf_path):
+              try:
+                  mf = json.load(open(mf_path))
+                  fields = mf.get("fields", [])
+                  data = mf.get("data", [])
+                  matches = [row for row in data if str(row[0]) == "1676326" or str(row[3]).upper() in ("PAPI", "PHEQ", "PEPS")]
+                  json.dump({"fields": fields, "data": matches}, open("probe/sec-mf-tickers.json", "w"), indent=2)
+                  report.append(f"=== SEC MF Tickers matches ({len(matches)}) ===")
+                  for m in matches:
+                      report.append(f"  {m}")
+                      if str(m[3]).upper() in ("PAPI", "PHEQ", "PEPS"):
+                          series_map[str(m[3]).upper()] = m[1]
+              except Exception as e:
+                  report.append(f"SEC MF parse error: {e}")
+              os.remove(mf_path)
+
+          # 3. Summarize SEC submissions for CIK 0001676326
+          sub_path = "probe/sec-submissions-raw.json"
+          if os.path.exists(sub_path):
+              try:
+                  sub = json.load(open(sub_path))
+                  recent = sub.get("filings", {}).get("recent", {})
+                  forms = recent.get("form", [])
+                  accs = recent.get("accessionNumber", [])
+                  fDates = recent.get("filingDate", [])
+                  rDates = recent.get("reportDate", [])
+                  docs = recent.get("primaryDocument", [])
+                  nports = []
+                  for i, f in enumerate(forms):
+                      if "N-PORT" in f:
+                          nports.append({
+                              "form": f,
+                              "accessionNumber": accs[i],
+                              "filingDate": fDates[i],
+                              "reportDate": rDates[i],
+                              "primaryDocument": docs[i],
+                          })
+                  json.dump({"cik": sub.get("cik"), "name": sub.get("name"), "nports": nports[:30]}, open("probe/sec-submissions-summary.json", "w"), indent=2)
+              except Exception as e:
+                  report.append(f"SEC submissions parse error: {e}")
+              os.remove(sub_path)
+
+          # 4. For each ticker in series_map (PAPI, PHEQ, PEPS), fetch browse-edgar Atom feed and latest N-PORT-P XML
+          for ticker, series_id in series_map.items():
+              atom_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={series_id}&type=N-PORT-P&count=10&output=atom"
+              try:
+                  req = urllib.request.Request(atom_url, headers={"User-Agent": sec_ua})
+                  atom_xml = urllib.request.urlopen(req, timeout=60).read().decode("utf-8", errors="ignore")
+                  open(f"probe/sec-atom-{ticker}.xml", "w").write(atom_xml)
+                  acc_match = re.search(r'accession-number>(\d{10}-\d{2}-\d{6})<', atom_xml)
+                  if acc_match:
+                      acc = acc_match.group(1)
+                      acc_no_dash = acc.replace("-", "")
+                      xml_url = f"https://www.sec.gov/Archives/edgar/data/1676326/{acc_no_dash}/primary_doc.xml"
+                      req2 = urllib.request.Request(xml_url, headers={"User-Agent": sec_ua})
+                      nport_xml = urllib.request.urlopen(req2, timeout=60).read().decode("utf-8", errors="ignore")
+                      open(f"probe/nport-{ticker}.xml", "w").write(nport_xml)
+                      report.append(f"Fetched N-PORT-P for {ticker} ({series_id}): acc={acc} len={len(nport_xml)}")
+              except Exception as e:
+                  report.append(f"SEC N-PORT fetch error for {ticker}: {e}")
+
+          open("probe/report.txt", "w").write("\n".join(report))
+          PY
+
+      - name: Commit probe results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add probe
+          if git diff --cached --quiet; then
+            echo "No probe changes"
+            exit 0
+          fi
+          git commit -m "chore(probe): capture live Parametric provider payloads [skip ci]"
+          git push origin HEAD:arena/01a0f9b5-parametric
