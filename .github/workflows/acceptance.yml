@@ -31,17 +31,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-      - name: Isolated scoped run, twice, byte-compared
-        run: |
-          set -euo pipefail
-          rm -rf /tmp/accept && mkdir -p /tmp/accept
-          cp -R scripts /tmp/accept/scripts
-          cd /tmp/accept
-          rc=0; TICKERS="PAPI PHEQ PEPS" VERBOSE=1 bun scripts/update-data.ts > /tmp/accept/run1.log 2>&1 || rc=$?; echo "$rc" > /tmp/accept/rc1
-          find api -type f | sort | xargs -r sha256sum > /tmp/accept/hashes1.txt
-          rc=0; TICKERS="PAPI PHEQ PEPS" VERBOSE=1 bun scripts/update-data.ts > /tmp/accept/run2.log 2>&1 || rc=$?; echo "$rc" > /tmp/accept/rc2
-          find api -type f | sort | xargs -r sha256sum > /tmp/accept/hashes2.txt
-          cp -R api /tmp/accept/after-run1
       - name: Full generation in the working tree (published seed)
         run: |
           set -euo pipefail
@@ -49,6 +38,23 @@ jobs:
           rc=0; bun scripts/update-data.ts > /tmp/full1.log 2>&1 || rc=$?; echo "$rc" > /tmp/rc-full1
           find api/parametric -type f | sort | xargs -r sha256sum > /tmp/full-hashes1.txt
           cp -R api/parametric /tmp/after-full1
+      - name: Isolated scoped run, twice, byte-compared
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/accept && mkdir -p /tmp/accept
+          cp -R scripts /tmp/accept/scripts
+          mkdir -p /tmp/accept/api
+          cp -R "$GITHUB_WORKSPACE"/api/parametric /tmp/accept/api/parametric
+          cd /tmp/accept
+          rc=0; TICKERS="PAPI PHEQ PEPS" VERBOSE=1 bun scripts/update-data.ts > /tmp/accept/run1.log 2>&1 || rc=$?; echo "$rc" > /tmp/accept/rc1
+          find api -type f | sort | xargs -r sha256sum > /tmp/accept/hashes1.txt
+          rc=0; TICKERS="PAPI PHEQ PEPS" VERBOSE=1 bun scripts/update-data.ts > /tmp/accept/run2.log 2>&1 || rc=$?; echo "$rc" > /tmp/accept/rc2
+          find api -type f | sort | xargs -r sha256sum > /tmp/accept/hashes2.txt
+          cp -R api /tmp/accept/after-run1
+      - name: Repeat the full generation (byte-stability witness)
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
           rc=0; bun scripts/update-data.ts > /tmp/full2.log 2>&1 || rc=$?; echo "$rc" > /tmp/rc-full2
           find api/parametric -type f | sort | xargs -r sha256sum > /tmp/full-hashes2.txt
       - name: Publish the evidence

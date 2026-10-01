@@ -147,9 +147,13 @@ const SEC_FUND_TICKERS_URL = 'https://www.sec.gov/files/company_tickers_mf.json'
 const SEC_COMPANY_TICKERS_URL = 'https://www.sec.gov/files/company_tickers.json';
 const SEC_UA_DEFAULT = 'daggerok Parametric ETF feed (https://github.com/daggerok/Parametric)';
 // The issuer sits behind an Akamai bot manager that answers 403 to a plain
-// fetch (verified 2026-10-01 from GitHub Actions); the read-only rendering
-// proxy is the documented sibling workaround (Franklin / ARK / Schwab).
-const ISSUER_DENIAL_LIMIT = 2;
+// fetch, from both this sandbox and GitHub Actions runners (verified
+// 2026-10-01). The read-only rendering proxy is the documented sibling
+// workaround (Franklin / ARK / Schwab); because a run that only needs the
+// catalog and three fund pages would otherwise never reach the switch, one
+// denial is already enough. The counter resets whenever a direct request
+// succeeds, so a single transient 403 does not move the rest of the run.
+const ISSUER_DENIAL_LIMIT = 1;
 const RENDER_PROXY = 'https://r.jina.ai';
 
 const API_ROOT = new URL('../api/parametric/', import.meta.url);
