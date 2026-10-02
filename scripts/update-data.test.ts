@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 // Offline tests with small inline samples; no network requests are made here.
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import {
   CONTROL_NAMES, HISTORY_HEADERS, YAHOO_HISTORY_HEADERS, annualizedToTotal, batchSelection, chartUrl,
@@ -11,7 +11,7 @@ import {
   parseCompanyTickerMap, parseEdgarAtomFilings, parseFundTickerMap, parseHoldingsCsv, parseIssuerCatalog,
   parseIssuerDistributions, parseIssuerProduct, parseIssuerReturnsTable, parseKeyFacts, parseNport,
   parseNportAccessions, parseRange, parseTopHoldings, pickEftsCik, proxyPayload, readConfig, resolveControls,
-  runPool, runtimeControls, configureProxyGate, totalToAnnualized, withRequestLane, PARAMETRIC_FUND_SLUGS,
+  installSystemCa, isCertError, runPool, runtimeControls, configureProxyGate, totalToAnnualized, withRequestLane, PARAMETRIC_FUND_SLUGS,
 } from './update-data';
 
 const ROOT = new URL('../', import.meta.url);
@@ -740,6 +740,65 @@ describe('control resolver', () => {
     expect(configFile().SEC_UA).toBe('daggerok ETF feed daggerok@gmail.com');
     expect(readConfig({}).secUa).toBe('daggerok ETF feed daggerok@gmail.com');
     expect(readConfig({ SEC_UA: 'ops contact' }).secUa).toBe('ops contact');
+  });
+});
+
+describe('system CA support', () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = realFetch; });
+  const certError = Object.assign(new Error('unable to get local issuer certificate'), { code: 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY' });
+  const noReexec = (): never => { throw new Error('unexpected restart'); };
+
+  test('USE_SYSTEM_CA accepts auto, true and false in any case and rejects anything else', () => {
+    expect(configFile().USE_SYSTEM_CA).toBe('auto');
+    expect(resolveControls(configFile()).USE_SYSTEM_CA).toBe('auto');
+    for (const value of ['auto', 'true', 'false', 'AUTO', 'True', 'FALSE']) {
+      expect(resolveControls({}, { USE_SYSTEM_CA: value }).USE_SYSTEM_CA).toBe(value.toLowerCase());
+    }
+    expect(() => resolveControls({}, { USE_SYSTEM_CA: 'maybe' })).toThrow(/USE_SYSTEM_CA/);
+    expect(() => resolveControls({}, {}, {}, { USE_SYSTEM_CA: '1' })).toThrow(/USE_SYSTEM_CA/);
+  });
+
+  test('isCertError recognizes untrusted-certificate errors, also through cause', () => {
+    expect(isCertError({ code: 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY' })).toBe(true);
+    expect(isCertError(new Error('unable to get local issuer certificate'))).toBe(true);
+    expect(isCertError(new Error('fetch failed', { cause: certError }))).toBe(true);
+    expect(isCertError(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }))).toBe(false);
+    expect(isCertError(new Error('HTTP 403 Forbidden'))).toBe(false);
+    expect(isCertError(null)).toBe(false);
+  });
+
+  test('mode false and an already active system CA leave fetch unchanged', () => {
+    installSystemCa('false', noReexec, false);
+    expect(globalThis.fetch).toBe(realFetch);
+    installSystemCa('auto', noReexec, true);
+    expect(globalThis.fetch).toBe(realFetch);
+    installSystemCa('true', noReexec, true);
+    expect(globalThis.fetch).toBe(realFetch);
+  });
+
+  test('mode true restarts immediately', () => {
+    let calls = 0;
+    installSystemCa('true', (() => { calls++; return undefined as never; }), false);
+    expect(calls).toBe(1);
+  });
+
+  test('mode auto restarts once on a certificate error, rethrows other errors, passes responses through', async () => {
+    let calls = 0;
+    const reexec = (() => { calls++; return undefined as never; });
+    let failure: unknown = certError;
+    globalThis.fetch = (async () => { if (failure) throw failure; return new Response('ok'); }) as unknown as typeof fetch;
+    const original = globalThis.fetch;
+    installSystemCa('auto', reexec, false);
+    expect(globalThis.fetch).not.toBe(original);
+    await fetch('https://example.test/');
+    expect(calls).toBe(1);
+    failure = Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' });
+    await expect(fetch('https://example.test/')).rejects.toThrow('ECONNRESET');
+    expect(calls).toBe(1);
+    failure = null;
+    expect(await (await fetch('https://example.test/')).text()).toBe('ok');
+    expect(calls).toBe(1);
   });
 });
 
