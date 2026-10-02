@@ -1,0 +1,15 @@
+transport probe — 2026-10-02T02:06:19Z run 36954066028
+== N-PORT primary_doc.xml (looking for <genInfo>) ==
+  [markdown/other] jina-default :: Title: edgarSubmission  URL Source: https://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml  
+  [markdown/other] jina-browser-accept :: <!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title><meta http-equiv="Content-Type" content="text/htm
+  [markdown/other] jina-accept-xml-only :: Title: edgarSubmission  URL Source: https://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml  
+  [markdown/other] jina-accept-json :: Title: edgarSubmission  URL Source: https://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml  
+  [markdown/other] jina-return-html :: <edgarsubmission xmlns="http://www.sec.gov/edgar/nport" xmlns:com="http://www.sec.gov/edgar/common" xmlns:ncom="http://w
+  [markdown/other] jina-return-text :: Title: edgarSubmission  URL Source: https://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml  
+  [markdown/other] jina-respond-html :: <edgarsubmission xmlns="http://www.sec.gov/edgar/nport" xmlns:com="http://www.sec.gov/edgar/common" xmlns:ncom="http://w
+  [markdown/other] jina-http-scheme :: Title: edgarSubmission  URL Source: http://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml  P
+  [markdown/other] direct-browser-ua :: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"
+== browse-edgar Atom feed (looking for <feed) ==
+  [markdown/other] jina-default :: Title: Morgan Stanley ETF Trust  (0001676326)  URL Source: https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CI
+  [markdown/other] jina-return-html :: <html><head><title>Morgan Stanley ETF Trust  (0001676326)</title><meta name="description" content=""></head><body><div><
+  [markdown/other] jina-accept-xml-only :: Title: Morgan Stanley ETF Trust  (0001676326)  URL Source: https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CI
