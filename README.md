@@ -79,7 +79,7 @@ Catalog discovery/bootstrap runs before fund workers start. Active workers are b
 
 Defaults are versioned in [`scripts/update-data.config.json`](scripts/update-data.config.json). Explicit CLI environment values (including empty ticker lists and `0`/`false`) override the file; `PARAMETRIC_` aliases take precedence over unprefixed names.
 
-Actions uses the same configuration resolver as [aberdeen](https://github.com/daggerok/aberdeen): **file defaults → advanced JSON → individual nonblank inputs**. The 24 individual fields are optional and blank means inherit. The 25th field, `advanced`, accepts any canonical control (for example `{"TICKERS":"","VERBOSE":true,"SEC_UA":"Your operator/contact"}`). Use explicit empty `TICKERS` in advanced JSON to clear a file allowlist. Unknown keys, non-scalar values, multiline values and invalid controls are rejected before networking. Source-specific controls `CATALOG_URL`, `SKIP_ISSUER`, `STORE_RAW_DOWNLOADS`, `SEC_UA` and `VERBOSE` are available through `advanced`.
+Actions resolves configuration as **file defaults -> `controls` JSON**. The workflow has a single optional `controls` dispatch input (no 25-input cap) that accepts any canonical control, for example `{"TICKERS":"PAPI PEPS","MAX_FETCHES":0,"VERBOSE":true,"SEC_UA":"Your operator/contact"}`. Blank inherits the file. Use an explicit empty `"TICKERS":""` to clear a file allowlist. Unknown keys, non-scalar values, multiline values and invalid controls are rejected before networking.
 
 Controls also accept the `PARAMETRIC_` prefix. `SEC_UA` should identify your operator/contact for production SEC requests.
 
