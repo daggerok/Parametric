@@ -83,6 +83,7 @@ Caveats:
 | `EDGAR_FALLBACK` | `true` | Use the fund's own SEC N-PORT-P holdings when the issuer publishes no full sheet |
 | `STORE_RAW_DOWNLOADS` | `false` | Keep the fetched product page and holdings sheet under each fund's `raw/`; never cookies or auth headers |
 | `CATALOG_URL` | official catalog URL | Optional catalog mirror URL |
+| `USE_SYSTEM_CA` | `auto` | TLS trust store: `auto` restarts the updater once with Bun's `--use-system-ca` when a request fails with an untrusted-certificate error; `true` always uses the system CA store; `false` never restarts. Not an individual workflow input: use `advanced`, the config file or the CLI environment |
 | `VERBOSE` | `false` | Show per-provider fallback and retry diagnostics |
 
 Filters combine with AND logic, and `TICKERS` does not override them.
