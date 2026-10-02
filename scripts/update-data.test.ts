@@ -13,6 +13,7 @@ import {
   parseIssuerDistributions, parseIssuerProduct, parseIssuerReturnsTable, parseNport,
   parseNportAccessions, parseRange, parseTopHoldings, pickEftsCik, readConfig, resolveControls,
   totalToAnnualized, holdingsDownloadUrl, isParametricFundUrl, PARAMETRIC_FUND_SLUGS,
+  proxyPayload, fetchSecJson, withRequestLane,
 } from './update-data';
 
 const fixture = (name: string): string => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
@@ -573,6 +574,46 @@ describe('official holdings downloads', () => {
     expect(parsed.rows[0]).toMatchObject({ Name: 'MSILF GOVERNMENT', Identifier: '61747C707', Weight: '1.65' });
     expect(parsed.rows[2]).toMatchObject({ Name: 'US TREASURY 4.125% 05/15/2028', Ticker: '', Identifier: '912810H80' });
     expect(parseHoldingsCsv('nothing here')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SEC rendering-proxy fallback (offline)
+// ---------------------------------------------------------------------------
+
+describe('SEC rendering-proxy fallback', () => {
+  test('the proxy preamble and wrapper are stripped from json, xml and text', () => {
+    expect(proxyPayload('Title: company_tickers_mf.json\n\nMarkdown Content:\n{"a":1}\n', 'json')).toBe('{"a":1}');
+    expect(proxyPayload('[{"a":1}]', 'json')).toBe('[{"a":1}]');
+    expect(proxyPayload('Markdown Content:\n<?xml version="1.0"?><feed><a/></feed>', 'xml')).toBe('<?xml version="1.0"?><feed><a/></feed>');
+    expect(proxyPayload('Markdown Content:\nplain body', 'text')).toBe('plain body');
+    expect(proxyPayload('  {"a":1}  ', 'json')).toBe('{"a":1}');
+  });
+
+  test('the first SEC denial switches the rest of the run to the proxy', async () => {
+    const calls: string[] = [];
+    const original = globalThis.fetch;
+    // The real payload shape captured through the proxy on 2026-10-01.
+    const body = 'Title: company_tickers_mf.json\n\nMarkdown Content:\n{"fields":["cik","seriesId","classId","symbol"],"data":[[1676326,"S000082252","C000245536","PAPI"]]}';
+    globalThis.fetch = (async (input: unknown) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.startsWith('https://r.jina.ai/')) return new Response(body, { status: 200 });
+      return new Response('blocked', { status: 403, statusText: 'Forbidden' });
+    }) as typeof fetch;
+    try {
+      const config = { maxRetries: 0, secUa: 'test up' } as any;
+      const payload = await withRequestLane(0, () => fetchSecJson('https://www.sec.gov/files/company_tickers_mf.json', '[edgar   ] test table', config));
+      expect(payload).toEqual({ fields: ['cik', 'seriesId', 'classId', 'symbol'], data: [[1676326, 'S000082252', 'C000245536', 'PAPI']] });
+      expect(calls[0]).toBe('https://www.sec.gov/files/company_tickers_mf.json');
+      expect(calls[1]).toBe('https://r.jina.ai/https://www.sec.gov/files/company_tickers_mf.json');
+      // One-way for the rest of the run: the next request does not retry direct.
+      calls.length = 0;
+      await withRequestLane(0, () => fetchSecJson('https://www.sec.gov/submissions/CIK0001676326.json', '[edgar   ] test submissions', config));
+      expect(calls).toEqual(['https://r.jina.ai/https://www.sec.gov/submissions/CIK0001676326.json']);
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 });
 

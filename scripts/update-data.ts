@@ -662,6 +662,61 @@ async function fetchIssuerText(url: string, label: string, config: UpdaterConfig
   }
 }
 
+// SEC EDGAR and its data host answer 403 to datacenter IPs (observed on the
+// GitHub runners on 2026-10-02; the probe run reached the same files through
+// the read-only rendering proxy). This fallback has its own one-way switch and
+// its own denial counter, so the issuer path keeps its own state.
+let secDirectDenials = 0;
+let secProxyOnly = false;
+const SEC_DENIAL_LIMIT = 1;
+function secProxyUrl(url: string): string {
+  return `${RENDER_PROXY}/https://${url.replace(/^https?:\/\//, '')}`;
+}
+
+// The rendering proxy prefixes its answer with a short plain-text preamble and
+// can wrap the document. The payload is recovered from the first opening token
+// to the last closing one, so a wrapped JSON/XML document still parses.
+export function proxyPayload(text: string, kind: 'json' | 'xml' | 'text'): string {
+  const marker = text.indexOf('Markdown Content:');
+  const body = (marker >= 0 ? text.slice(marker + 'Markdown Content:'.length) : text).trimStart();
+  if (kind === 'text') return body;
+  const start = body.search(kind === 'json' ? /[[{]/ : /</);
+  const end = kind === 'json' ? Math.max(body.lastIndexOf('}'), body.lastIndexOf(']')) : body.lastIndexOf('>');
+  return start >= 0 && end > start ? body.slice(start, end + 1) : body;
+}
+
+// Exported for the offline proxy-fallback test.
+export async function fetchSecText(url: string, label: string, config: UpdaterConfig, kind: 'json' | 'xml' | 'text' = 'text'): Promise<string> {
+  if (secProxyOnly) {
+    const response = await fetchWithRetry(secProxyUrl(url), `${label} (proxy)`, { headers: secHeaders(config) }, config.maxRetries);
+    return proxyPayload(await response.text(), kind);
+  }
+  try {
+    const response = await fetchWithRetry(url, label, { headers: secHeaders(config) }, 0);
+    secDirectDenials = 0;
+    return await response.text();
+  } catch (error) {
+    const denied = error instanceof HttpError && [403, 429].includes(error.status);
+    if (!denied) throw error;
+    secDirectDenials += 1;
+    if (secDirectDenials < SEC_DENIAL_LIMIT) throw error;
+    secProxyOnly = true;
+    console.warn(`[ edgar    ] ${errorMessage(error)} — switching to the read-only rendering proxy for the rest of this run`);
+    const response = await fetchWithRetry(secProxyUrl(url), `${label} (proxy)`, { headers: secHeaders(config) }, config.maxRetries);
+    return proxyPayload(await response.text(), kind);
+  }
+}
+
+// Exported for the offline proxy-fallback test.
+export async function fetchSecJson(url: string, label: string, config: UpdaterConfig): Promise<JsonRecord> {
+  const text = await fetchSecText(url, label, config, 'json');
+  try {
+    return JSON.parse(proxyPayload(text, 'json')) as JsonRecord;
+  } catch {
+    throw new Error(`${label}: response is not valid JSON`);
+  }
+}
+
 async function fetchText(url: string, label: string, headers: Record<string, string>, config: UpdaterConfig): Promise<string> {
   const response = await fetchWithRetry(url, label, { headers }, config.maxRetries);
   return await response.text();
@@ -2170,7 +2225,7 @@ let companyTickerMap: Map<string, string> | null = null;
 async function loadFundTickerMap(config: UpdaterConfig): Promise<Map<string, SecSeriesRef>> {
   if (fundTickerMap) return fundTickerMap;
   try {
-    const payload = await fetchJson(SEC_FUND_TICKERS_URL, '[edgar   ] fund ticker table', secHeaders(config), config);
+    const payload = await fetchSecJson(SEC_FUND_TICKERS_URL, '[edgar   ] fund ticker table', config);
     fundTickerMap = parseFundTickerMap(payload);
     outputNote(`[ edgar    ] SEC fund ticker table: ${fundTickerMap.size} ETF / mutual-fund share classes`);
   } catch (error) {
@@ -2183,7 +2238,7 @@ async function loadFundTickerMap(config: UpdaterConfig): Promise<Map<string, Sec
 async function loadCompanyTickerMap(config: UpdaterConfig): Promise<Map<string, string>> {
   if (companyTickerMap) return companyTickerMap;
   try {
-    const payload = await fetchJson(SEC_COMPANY_TICKERS_URL, '[edgar   ] company ticker table', secHeaders(config), config);
+    const payload = await fetchSecJson(SEC_COMPANY_TICKERS_URL, '[edgar   ] company ticker table', config);
     companyTickerMap = parseCompanyTickerMap(payload);
     outputNote(`[ edgar    ] SEC company ticker table: ${companyTickerMap.size} issuer names`);
   } catch (error) {
@@ -2215,7 +2270,7 @@ async function resolveRegistrantCik(fund: CatalogFund, config: UpdaterConfig): P
   }
   if (!cik) {
     try {
-      const payload = await fetchJson(eftsSearchUrl(fund.ticker), `[edgar   ] search ${fund.ticker}`, secHeaders(config), config);
+      const payload = await fetchSecJson(eftsSearchUrl(fund.ticker), `[edgar   ] search ${fund.ticker}`, config);
       cik = pickEftsCik(payload, fund.name);
     } catch (error) {
       outputNote(`[ edgar    ] search ${fund.ticker}: ${errorMessage(error)}`);
@@ -2236,7 +2291,7 @@ async function resolveNportFiling(
   const ref = table.get(fund.ticker) || null;
   if (ref?.seriesId) {
     try {
-      const atom = await fetchText(edgarSeriesFilingsUrl(ref.seriesId), `[edgar   ] ${fund.ticker} series ${ref.seriesId}`, secHeaders(config), config);
+      const atom = await fetchSecText(edgarSeriesFilingsUrl(ref.seriesId), `[edgar   ] ${fund.ticker} series ${ref.seriesId}`, config, 'xml');
       const [newest] = parseEdgarAtomFilings(atom);
       if (newest) return { accession: newest, cik: ref.cik, seriesId: ref.seriesId };
     } catch (error) {
@@ -2246,7 +2301,7 @@ async function resolveNportFiling(
   const cik = ref?.cik || (await resolveRegistrantCik(fund, config));
   if (!cik) return null;
   try {
-    const submissions = await fetchJson(`${SEC_DATA_HOST}/submissions/CIK${cik.padStart(10, '0')}.json`, `[edgar   ] ${cik} submissions`, secHeaders(config), config);
+    const submissions = await fetchSecJson(`${SEC_DATA_HOST}/submissions/CIK${cik.padStart(10, '0')}.json`, `[edgar   ] ${cik} submissions`, config);
     const [newest] = parseNportAccessions(submissions);
     if (newest) return { accession: newest, cik, seriesId: ref?.seriesId || '' };
   } catch (error) {
@@ -2272,7 +2327,7 @@ async function loadIssuerHoldings(fund: CatalogFund, pageText: string, config: U
     return null;
   }
   try {
-    const text = await fetchText(url, `[ holdings ] ${fund.ticker} official CSV`, issuerHeaders(), config);
+    const text = await fetchIssuerText(url, `[ holdings ] ${fund.ticker} official CSV`, config);
     if (config.storeRawDownloads) await storeRaw(fund.ticker, 'holdings.csv', text);
     const parsed = parseHoldingsCsv(text);
     if (parsed && parsed.rows.length > 10) return parsed;
@@ -2382,7 +2437,7 @@ async function processFund(
     try {
       const filing = await resolveNportFiling(fund, config);
       if (filing) {
-        const parsed = parseNport(await fetchText(filing.accession.url, `[ nport    ] ${ticker}`, secHeaders(config), config));
+        const parsed = parseNport(await fetchSecText(filing.accession.url, `[ nport    ] ${ticker}`, config, 'xml'));
         if (!nportBelongsToFund(parsed, filing, fund)) {
           outputNote(`[ edgar    ] ${ticker}: ${filing.accession.accession} reports "${parsed.seriesName || 'unknown series'}" — skipped`);
         } else if (parsed.holdings.length) {
