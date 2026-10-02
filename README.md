@@ -64,8 +64,8 @@ Caveats:
 | Environment variable | Default | Meaning |
 | --- | --: | --- |
 | `MAX_FETCHES` | `0` | Batch size: a positive value continues after the saved cursor, `0` or empty is a full pass over every fund |
-| `REQUEST_SLEEP` | `3` | Minimum delay in seconds between outgoing request starts within each worker, including retries and issuer redirects |
-| `CONCURRENCY` | `1` | Fund workers (integer >= 1). Each worker is paced independently, so workers fetch in parallel and there is no global request-start queue. The issuer and SEC requests share one rendering proxy once it takes over, so keep it modest |
+| `REQUEST_SLEEP` | `3` | Minimum delay in seconds between direct request starts within each worker lane, including retries. Proxy requests ignore it and use the global 3.2 s proxy gate |
+| `CONCURRENCY` | `1` | Fund workers (integer >= 1). Direct requests are paced per worker, so N workers give about N times the throughput. Once issuer or SEC traffic switches to the r.jina.ai rendering proxy, all proxy request starts share one global gate (minimum 3.2 s apart, whatever REQUEST_SLEEP or CONCURRENCY say) and a proxy request is retried at most once |
 | `TICKERS` | all | Space-, comma- or semicolon-separated ticker allowlist, applied before `MAX_FETCHES` |
 | `AUM` | `:` | Net assets range `min:max`; bounds are USD amounts with optional `K`/`M`/`B`/`T`, or a preset `nano`, `micro`, `small`, `mid`, `large` |
 | `TER` | `:` | Expense ratio range in percent, strict `min:max` |

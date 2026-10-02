@@ -11,7 +11,7 @@ import {
   parseCompanyTickerMap, parseEdgarAtomFilings, parseFundTickerMap, parseHoldingsCsv, parseIssuerCatalog,
   parseIssuerDistributions, parseIssuerProduct, parseIssuerReturnsTable, parseKeyFacts, parseNport,
   parseNportAccessions, parseRange, parseTopHoldings, pickEftsCik, proxyPayload, readConfig, resolveControls,
-  runPool, runtimeControls, totalToAnnualized, withRequestLane, PARAMETRIC_FUND_SLUGS,
+  runPool, runtimeControls, configureProxyGate, totalToAnnualized, withRequestLane, PARAMETRIC_FUND_SLUGS,
 } from './update-data';
 
 const ROOT = new URL('../', import.meta.url);
@@ -431,6 +431,7 @@ describe('SEC rendering-proxy fallback', () => {
       if (url.startsWith('https://r.jina.ai/')) return new Response(body, { status: 200 });
       return new Response('blocked', { status: 403, statusText: 'Forbidden' });
     }) as typeof fetch;
+    configureProxyGate(0);
     try {
       const config = { maxRetries: 1, secUa: 'test ua' } as any;
       const payload = await withRequestLane(0, () => fetchSecJson('https://www.sec.gov/files/company_tickers_mf.json', '[edgar   ] test table', config));
@@ -449,6 +450,7 @@ describe('SEC rendering-proxy fallback', () => {
       expect(calls).toEqual(['https://r.jina.ai/https://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml']);
       expect(headers[0]['X-Return-Format']).toBe('html');
     } finally {
+      configureProxyGate(3200);
       globalThis.fetch = original;
     }
   });
@@ -797,6 +799,41 @@ describe('concurrency', () => {
     expect(await maxInFlight(3)).toBe(3);
     expect(await maxInFlight(15)).toBe(6);
   });
+
+  test('proxy gate serializes proxy starts while direct lanes stay parallel and proxy retries do not multiply', async () => {
+    const starts: number[] = [];
+    let direct = 0;
+    let directPeak = 0;
+    let proxyCalls = 0;
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: unknown) => {
+      if (String(input).startsWith('https://r.jina.ai/')) {
+        proxyCalls += 1;
+        starts.push(performance.now());
+        return new Response('busy', { status: 429, statusText: 'Too Many Requests' });
+      }
+      direct += 1;
+      directPeak = Math.max(directPeak, direct);
+      await Bun.sleep(40);
+      direct -= 1;
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
+    configureProxyGate(60);
+    try {
+      await runPool([0, 1, 2], 3, 0, async (i) => {
+        await fetchWithRetry(`https://example.test/${i}`, '[ test ]', {}, 1);
+        await expect(fetchWithRetry(`https://r.jina.ai/https://example.test/${i}`, '[ test proxy ]', {}, 5)).rejects.toThrow(/429/);
+      });
+    } finally {
+      globalThis.fetch = original;
+      configureProxyGate(3200);
+    }
+    expect(directPeak).toBe(3);
+    // 3 workers x (1 attempt + at most 1 retry), never 6 retries each
+    expect(proxyCalls).toBe(6);
+    starts.sort((a, b) => a - b);
+    for (let i = 1; i < starts.length; i++) expect(starts[i] - starts[i - 1]).toBeGreaterThanOrEqual(50);
+  }, 20000);
 
   test('every item is handled exactly once', async () => {
     const seen: number[] = [];

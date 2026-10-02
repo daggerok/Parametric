@@ -155,6 +155,8 @@ const SEC_UA_DEFAULT = 'daggerok ETF feed daggerok@gmail.com';
 // succeeds, so a single transient 403 does not move the rest of the run.
 const ISSUER_DENIAL_LIMIT = 1;
 const RENDER_PROXY = 'https://r.jina.ai';
+// r.jina.ai anonymous tier allows about 20 requests per minute
+const PROXY_SLEEP_SECONDS = 3.2;
 
 const API_ROOT = new URL('../api/parametric/', import.meta.url);
 const INDEX_FILE = new URL('index.json', API_ROOT);
@@ -500,15 +502,15 @@ Invalid values are rejected before any request or write; nothing is silently ign
 PARAMETRIC_<NAME> takes precedence over <NAME>; PARAMETRIC_LIMIT (MAX_FETCHES) and HISTORICAL_PAGE_SIZE (HISTORY_PAGE_SIZE) are accepted aliases.
 Controls (defaults live in the config file):
   MAX_FETCHES=0          batch size; 0 or empty is a full pass (cursor in api/parametric/update-state.json)
-  REQUEST_SLEEP=3        seconds between request starts within each worker
-  CONCURRENCY=1          independently paced fund workers (integer >= 1)
+  REQUEST_SLEEP=3        seconds between direct request starts within each worker (each worker has its own lane)
+  CONCURRENCY=1          parallel fund workers (integer >= 1); r.jina.ai proxy requests share one global gate (min ${PROXY_SLEEP_SECONDS}s between starts)
   TICKERS="PAPI PHEQ"    exact fund allowlist, applied before MAX_FETCHES
   AUM                    min:max or nano/micro/small/mid/large (bounds accept K/M/B/T)
   TER DIVIDEND_YIELD SEC_YIELD   min:max percentages
   ${RETURN_PERIODS.map((p) => `PERFORMANCE_${p}`).join(' ')}   min:max (annualized for 3Y+)
   ${RETURN_PERIODS.map((p) => `TOTAL_RETURN_${p}`).join(' ')}   min:max (cumulative)
   HOLDINGS_PAGE_SIZE=250 HISTORY_PAGE_SIZE=1000   rows per generated JSON page (integers >= 1)
-  MAX_RETRIES=2          retries after the initial request (integer >= 1)
+  MAX_RETRIES=2          retries after the initial request (integer >= 1); proxy requests retry at most once
   HISTORY_RANGE=max      Yahoo history window: max or Ny (for example 5y)
   SEC_UA                 SEC User-Agent with a contact (default declared in the config file, redacted in logs)
   SKIP_YAHOO SKIP_ISSUER EDGAR_FALLBACK STORE_RAW_DOWNLOADS VERBOSE   booleans (1/0, true/false, yes/no, on/off)
@@ -552,8 +554,18 @@ let discoveryGate = createRequestGate(REQUEST_SLEEP_FALLBACK * 1000);
 export function withRequestLane<T>(delayMs: number, work: () => Promise<T>): Promise<T> {
   return requestLane.run(createRequestGate(delayMs), work);
 }
-async function paceRequests(): Promise<void> {
-  await (requestLane.getStore() ?? discoveryGate)();
+// Global gate for the rate-limited r.jina.ai proxy: proxy request starts are at
+// least PROXY_SLEEP_SECONDS apart for the whole process, whatever REQUEST_SLEEP
+// and CONCURRENCY say. Direct requests keep using their per-worker lanes.
+let proxyGate = createRequestGate(PROXY_SLEEP_SECONDS * 1000);
+export function configureProxyGate(delayMs: number): void {
+  proxyGate = createRequestGate(delayMs);
+}
+function isProxyUrl(url: string): boolean {
+  return url.startsWith(`${RENDER_PROXY}/`);
+}
+async function paceRequests(url: string): Promise<void> {
+  await (isProxyUrl(url) ? proxyGate : (requestLane.getStore() ?? discoveryGate))();
 }
 class HttpError extends Error {
   constructor(
@@ -579,8 +591,10 @@ export async function fetchWithRetry(
   maxRetries = 2,
 ): Promise<Response> {
   let lastError: unknown = null;
+  // Retries must not multiply traffic to the rate-limited proxy
+  if (isProxyUrl(url)) maxRetries = Math.min(maxRetries, 1);
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    await paceRequests();
+    await paceRequests(url);
     try {
       const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(45000), ...init });
       if (response.ok) return response;
@@ -2827,6 +2841,7 @@ async function main(): Promise<void> {
   await mkdir(API_ROOT, { recursive: true });
   const requestSleepMs = Math.max(0, config.requestSleep) * 1000;
   discoveryGate = createRequestGate(requestSleepMs);
+  configureProxyGate(Math.max(requestSleepMs, PROXY_SLEEP_SECONDS * 1000));
   outputPrintConfig('Parametric', config);
   console.log('');
   const catalog = new Map<string, CatalogFund>();
