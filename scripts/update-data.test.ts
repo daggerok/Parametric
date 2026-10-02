@@ -13,7 +13,7 @@ import {
   parseIssuerDistributions, parseIssuerProduct, parseIssuerReturnsTable, parseNport,
   parseNportAccessions, parseRange, parseTopHoldings, pickEftsCik, readConfig, resolveControls,
   totalToAnnualized, holdingsDownloadUrl, isParametricFundUrl, PARAMETRIC_FUND_SLUGS,
-  proxyPayload, fetchSecJson, withRequestLane,
+  proxyPayload, fetchSecJson, fetchSecText, withRequestLane,
 } from './update-data';
 
 const fixture = (name: string): string => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
@@ -592,12 +592,14 @@ describe('SEC rendering-proxy fallback', () => {
 
   test('the first SEC denial switches the rest of the run to the proxy', async () => {
     const calls: string[] = [];
+    const headers: Array<Record<string, string>> = [];
     const original = globalThis.fetch;
     // The real payload shape captured through the proxy on 2026-10-01.
     const body = 'Title: company_tickers_mf.json\n\nMarkdown Content:\n{"fields":["cik","seriesId","classId","symbol"],"data":[[1676326,"S000082252","C000245536","PAPI"]]}';
-    globalThis.fetch = (async (input: unknown) => {
+    globalThis.fetch = (async (input: unknown, init?: { headers?: Record<string, string> }) => {
       const url = String(input);
       calls.push(url);
+      headers.push(init?.headers || {});
       if (url.startsWith('https://r.jina.ai/')) return new Response(body, { status: 200 });
       return new Response('blocked', { status: 403, statusText: 'Forbidden' });
     }) as typeof fetch;
@@ -607,13 +609,33 @@ describe('SEC rendering-proxy fallback', () => {
       expect(payload).toEqual({ fields: ['cik', 'seriesId', 'classId', 'symbol'], data: [[1676326, 'S000082252', 'C000245536', 'PAPI']] });
       expect(calls[0]).toBe('https://www.sec.gov/files/company_tickers_mf.json');
       expect(calls[1]).toBe('https://r.jina.ai/https://www.sec.gov/files/company_tickers_mf.json');
+      // JSON keeps the proxy's default mode.
+      expect(headers[1]['X-Return-Format']).toBeUndefined();
       // One-way for the rest of the run: the next request does not retry direct.
       calls.length = 0;
       await withRequestLane(0, () => fetchSecJson('https://www.sec.gov/submissions/CIK0001676326.json', '[edgar   ] test submissions', config));
       expect(calls).toEqual(['https://r.jina.ai/https://www.sec.gov/submissions/CIK0001676326.json']);
+      // XML asks the proxy for the raw document: its default mode renders XML
+      // as markdown, which loses every tag the N-PORT reader needs.
+      calls.length = 0;
+      headers.length = 0;
+      await withRequestLane(0, () => fetchSecText('https://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml', '[edgar   ] test nport', config, 'xml'));
+      expect(calls).toEqual(['https://r.jina.ai/https://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml']);
+      expect(headers[0]['X-Return-Format']).toBe('html');
     } finally {
       globalThis.fetch = original;
     }
+  });
+
+  test('the N-PORT reader tolerates the lowercase tags the proxy HTML mode returns', () => {
+    const raw = fixture('nport-PAPI-sample.xml');
+    const parsed = parseNport(raw);
+    // Jina's raw-document mode lowercases element names; every value survives.
+    const lower = parseNport(raw.toLowerCase());
+    expect(lower.seriesId).toBe(parsed.seriesId.toUpperCase());
+    expect(lower.seriesName).toBe(parsed.seriesName.toLowerCase());
+    expect(lower.holdings.length).toBe(parsed.holdings.length);
+    expect(lower.holdings.length).toBeGreaterThan(0);
   });
 });
 

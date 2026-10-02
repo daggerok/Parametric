@@ -624,6 +624,13 @@ function secHeaders(config: UpdaterConfig): Record<string, string> {
   return { 'User-Agent': config.secUa, Accept: 'application/json,*/*' };
 }
 
+// The rendering proxy converts XML documents to markdown by default; HTML mode
+// returns the raw document (verified on a runner on 2026-10-02, including a
+// 1.2 MB N-PORT-P filing with 955 positions, untruncated).
+function secProxyHeaders(config: UpdaterConfig, kind: 'json' | 'xml' | 'text'): Record<string, string> {
+  return { ...secHeaders(config), ...(kind === 'xml' ? { 'X-Return-Format': 'html' } : {}) };
+}
+
 function issuerHeaders(): Record<string, string> {
   return { 'User-Agent': YAHOO_BROWSER_UA, Accept: 'text/html,application/xhtml+xml,*/*' };
 }
@@ -688,7 +695,7 @@ export function proxyPayload(text: string, kind: 'json' | 'xml' | 'text'): strin
 // Exported for the offline proxy-fallback test.
 export async function fetchSecText(url: string, label: string, config: UpdaterConfig, kind: 'json' | 'xml' | 'text' = 'text'): Promise<string> {
   if (secProxyOnly) {
-    const response = await fetchWithRetry(secProxyUrl(url), `${label} (proxy)`, { headers: secHeaders(config) }, config.maxRetries);
+    const response = await fetchWithRetry(secProxyUrl(url), `${label} (proxy)`, { headers: secProxyHeaders(config, kind) }, config.maxRetries);
     return proxyPayload(await response.text(), kind);
   }
   try {
@@ -702,7 +709,7 @@ export async function fetchSecText(url: string, label: string, config: UpdaterCo
     if (secDirectDenials < SEC_DENIAL_LIMIT) throw error;
     secProxyOnly = true;
     console.warn(`[ edgar    ] ${errorMessage(error)} — switching to the read-only rendering proxy for the rest of this run`);
-    const response = await fetchWithRetry(secProxyUrl(url), `${label} (proxy)`, { headers: secHeaders(config) }, config.maxRetries);
+    const response = await fetchWithRetry(secProxyUrl(url), `${label} (proxy)`, { headers: secProxyHeaders(config, kind) }, config.maxRetries);
     return proxyPayload(await response.text(), kind);
   }
 }
@@ -1158,7 +1165,7 @@ export function parseNport(xml: string): ParsedNport {
   const fundInfoMatch = /<fundInfo>([\s\S]*?)<\/fundInfo>/i.exec(xml);
   const fundInfo = fundInfoMatch ? fundInfoMatch[1] : '';
   const holdings: NportHolding[] = [];
-  const blockRe = /<invstOrSec>([\s\S]*?)<\/invstOrSec>/g;
+  const blockRe = /<invstOrSec>([\s\S]*?)<\/invstOrSec>/gi;
   let block: RegExpExecArray | null;
   let totalValue = 0;
   while ((block = blockRe.exec(xml)) !== null) {
@@ -1192,7 +1199,7 @@ export function parseNport(xml: string): ParsedNport {
     regName: tagValue(genInfo, 'regName'),
     regCik: tagValue(genInfo, 'regCik'),
     seriesName: tagValue(genInfo, 'seriesName'),
-    seriesId: tagValue(genInfo, 'seriesId'),
+    seriesId: tagValue(genInfo, 'seriesId').toUpperCase(),
     repPdDate: toIsoDate(tagValue(genInfo, 'repPdDate')),
     holdings,
     totalValue,
@@ -2280,20 +2287,23 @@ async function resolveRegistrantCik(fund: CatalogFund, config: UpdaterConfig): P
   return cik;
 }
 
-// The fund's own newest N-PORT-P filing. The SEC series id gives an exact,
-// one-request answer (browse-edgar Atom, filtered to that series); scanning the
-// whole registrant's submissions is the fallback when the series is unknown.
-async function resolveNportFiling(
+// Registrants file one N-PORT-P per series, so the newest filing of the trust
+// usually belongs to another fund: a bounded, per-run-cached list of the newest
+// filings is scanned until the document carrying this fund's own series id is
+// found. The series-filtered Atom feed answers in one request when it is
+// reachable; scanning the registrant's submissions is the fallback.
+const NPORT_CANDIDATE_LIMIT = 20;
+async function resolveNportFilings(
   fund: CatalogFund,
   config: UpdaterConfig,
-): Promise<{ accession: NportAccession; cik: string; seriesId: string } | null> {
+): Promise<{ candidates: NportAccession[]; cik: string; seriesId: string } | null> {
   const table = await loadFundTickerMap(config);
   const ref = table.get(fund.ticker) || null;
   if (ref?.seriesId) {
     try {
       const atom = await fetchSecText(edgarSeriesFilingsUrl(ref.seriesId), `[edgar   ] ${fund.ticker} series ${ref.seriesId}`, config, 'xml');
-      const [newest] = parseEdgarAtomFilings(atom);
-      if (newest) return { accession: newest, cik: ref.cik, seriesId: ref.seriesId };
+      const filings = parseEdgarAtomFilings(atom);
+      if (filings.length) return { candidates: filings, cik: ref.cik, seriesId: ref.seriesId };
     } catch (error) {
       outputNote(`[ edgar    ] ${fund.ticker} series ${ref.seriesId}: ${errorMessage(error)} — scanning registrant submissions`);
     }
@@ -2302,12 +2312,23 @@ async function resolveNportFiling(
   if (!cik) return null;
   try {
     const submissions = await fetchSecJson(`${SEC_DATA_HOST}/submissions/CIK${cik.padStart(10, '0')}.json`, `[edgar   ] ${cik} submissions`, config);
-    const [newest] = parseNportAccessions(submissions);
-    if (newest) return { accession: newest, cik, seriesId: ref?.seriesId || '' };
+    const filings = parseNportAccessions(submissions).slice(0, NPORT_CANDIDATE_LIMIT);
+    if (filings.length) return { candidates: filings, cik, seriesId: ref?.seriesId || '' };
   } catch (error) {
     outputNote(`[ edgar    ] ${fund.ticker}: ${errorMessage(error)}`);
   }
   return null;
+}
+
+// One document is fetched at most once per run, even when several funds scan
+// past it on their way to their own filing.
+const nportDocumentCache = new Map<string, ParsedNport>();
+async function loadNportDocument(accession: NportAccession, config: UpdaterConfig): Promise<ParsedNport> {
+  const cached = nportDocumentCache.get(accession.url);
+  if (cached) return cached;
+  const parsed = parseNport(await fetchSecText(accession.url, `[ nport    ] ${accession.accession}`, config, 'xml'));
+  nportDocumentCache.set(accession.url, parsed);
+  return parsed;
 }
 
 // A registrant files one N-PORT-P per series: only accept the document that
@@ -2435,20 +2456,31 @@ async function processFund(
   let holdingsEdgar: ParsedNport | null = null;
   if (!holdings && config.edgarFallback) {
     try {
-      const filing = await resolveNportFiling(fund, config);
-      if (filing) {
-        const parsed = parseNport(await fetchSecText(filing.accession.url, `[ nport    ] ${ticker}`, config, 'xml'));
-        if (!nportBelongsToFund(parsed, filing, fund)) {
-          outputNote(`[ edgar    ] ${ticker}: ${filing.accession.accession} reports "${parsed.seriesName || 'unknown series'}" — skipped`);
-        } else if (parsed.holdings.length) {
-          holdingsEdgar = parsed;
-          holdings = {
-            asOfDate: parsed.repPdDate || null,
-            headers: HOLDINGS_HEADERS,
-            rows: fillNportTickers(parsed.holdings, await loadCompanyTickerMap(config)),
-          };
-          holdingsSource = `SEC EDGAR Form N-PORT-P (accession ${filing.accession.accession}, report period ${parsed.repPdDate || 'n/a'})`;
+      const resolved = await resolveNportFilings(fund, config);
+      if (resolved) {
+        let checked = 0;
+        for (const candidate of resolved.candidates) {
+          let parsed: ParsedNport;
+          try {
+            parsed = await loadNportDocument(candidate, config);
+          } catch (error) {
+            outputNote(`[ edgar    ] ${ticker}: ${candidate.accession}: ${errorMessage(error)} — trying the previous filing`);
+            continue;
+          }
+          checked += 1;
+          if (!nportBelongsToFund(parsed, { seriesId: resolved.seriesId }, fund)) continue;
+          if (parsed.holdings.length) {
+            holdingsEdgar = parsed;
+            holdings = {
+              asOfDate: parsed.repPdDate || null,
+              headers: HOLDINGS_HEADERS,
+              rows: fillNportTickers(parsed.holdings, await loadCompanyTickerMap(config)),
+            };
+            holdingsSource = `SEC EDGAR Form N-PORT-P (accession ${candidate.accession}, report period ${parsed.repPdDate || 'n/a'})`;
+          }
+          break;
         }
+        if (!holdings) outputNote(`[ edgar    ] ${ticker}: no N-PORT-P filing of this series among ${checked} checked — keeping previous holdings`);
       }
     } catch (error) {
       outputNote(`[ edgar    ] ${ticker}: ${errorMessage(error)} — keeping previous holdings`);
