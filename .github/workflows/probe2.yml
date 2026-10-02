@@ -56,6 +56,28 @@ jobs:
             probe "jina-return-html" '<feed' "https://r.jina.ai/$ATOM" -H 'X-Return-Format: html' || true
             probe "jina-accept-xml-only" '<feed' "https://r.jina.ai/$ATOM" -H 'Accept: application/xml' || true
           } >> "$OUT"
+          python3 - <<'PY' >> "$OUT"
+          import json, re, subprocess
+          def get(url, extra=()):
+              return subprocess.run(['curl','-sSL','-m','120',*extra,url], capture_output=True, text=True).stdout
+          print("== N-PORT filings for CIK 0001676326 via jina (X-Return-Format: html) ==")
+          subs = get("https://r.jina.ai/https://data.sec.gov/submissions/CIK0001676326.json")
+          try:
+              data = json.loads(subs)
+          except Exception:
+              data = json.loads(subs[subs.find('{'):])
+          recent = data['filings']['recent']
+          rows = [(recent['accessionNumber'][i], recent['form'][i], recent['filingDate'][i], recent['reportDate'][i])
+                  for i in range(len(recent['form'])) if str(recent['form'][i]).startswith('NPORT')]
+          print(f"  NPORT-P filings listed: {len(rows)}")
+          for acc, form, filed, rep in rows[:8]:
+              digits = acc.replace('-', '')
+              xml = get(f"https://r.jina.ai/https://www.sec.gov/Archives/edgar/data/1676326/{digits}/primary_doc.xml", ('-H', 'X-Return-Format: html'))
+              sid = re.search(r'<seriesid>\s*([SC]\d+)', xml, re.I)
+              name = re.search(r'<seriesname>\s*([^<]+)', xml, re.I)
+              count = len(re.findall(r'<invstorsec\b', xml, re.I))
+              print(f"  {acc} filed={filed} rep={rep} bytes={len(xml)} series={sid.group(1) if sid else '?'} name={(name.group(1).strip()[:44] if name else '?')} invstOrSec={count}")
+          PY
           cat "$OUT"
       - name: Commit the probe result
         run: |
