@@ -5,10 +5,130 @@ on:
     - cron: '0 0 * * 0'
   workflow_dispatch:
     inputs:
-      controls:
-        description: 'JSON object with any updater controls, e.g. {"TICKERS":"PAPI PEPS","MAX_FETCHES":0,"AUM":"small"}; blank inherits scripts/update-data.config.json'
+      max_fetches:
+        description: "Batch size; positive resumes after the saved ticker cursor, empty or 0 is a full pass over every catalog fund; blank inherits scripts/update-data.config.json"
         required: false
-        default: ''
+        default: ""
+        type: string
+      request_sleep:
+        description: "Seconds between outgoing request starts within each worker; keep requests polite to eatonvance.com, SEC and Yahoo; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      concurrency:
+        description: "Parallel fund workers, each paced independently (keep low); blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      tickers:
+        description: "Only update these tickers, separated by spaces or commas; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      aum:
+        description: "Net assets min:max; bounds may be amounts or K/M/B/T suffixes, or nano/micro/small/mid/large; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      ter:
+        description: "Expense ratio range in percent: min:max; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      dividend_yield:
+        description: "Indicated dividend yield percentage range: min:max; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      sec_yield:
+        description: "Published 30-day SEC yield percentage range: min:max; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      holdings_page_size:
+        description: "Rows in each generated holdings JSON page; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      history_page_size:
+        description: "Rows in each generated history JSON page; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      max_retries:
+        description: "Retries after the initial request (integer >= 1); blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      history_range:
+        description: "Yahoo chart window for the daily history: max or Ny (for example 5y); blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      skip_yahoo:
+        description: "Keep previous history and dividends while refreshing the catalog and holdings; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      skip_issuer:
+        description: "Keep the previously published catalog and product-page data; use only fallbacks; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      edgar_fallback:
+        description: "Use SEC EDGAR Form N-PORT-P holdings when the issuer publishes no full sheet (default on); blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      verbose:
+        description: "Show per-provider fallback and retry diagnostics; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      performance_ytd:
+        description: "YTD NAV return range: min:max; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      performance_1y:
+        description: "1Y NAV return range: min:max; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      performance_3y:
+        description: "Annualized 3Y return range: min:max; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      performance_5y:
+        description: "Annualized 5Y return range: min:max; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      performance_10y:
+        description: "Annualized 10Y return range: min:max; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      total_return_ytd:
+        description: "Cumulative YTD return range: min:max; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      total_return_1y:
+        description: "Cumulative 1Y return range: min:max; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      total_return_3y:
+        description: "Cumulative 3Y return range: min:max; blank inherits scripts/update-data.config.json"
+        required: false
+        default: ""
+        type: string
+      advanced:
+        description: 'JSON object of supported control overrides not exposed above (keys are UPPER_CASE control names, values are scalars); nonblank individual inputs win'
+        required: false
+        default: '{}'
         type: string
 
 permissions:
@@ -21,9 +141,12 @@ concurrency:
 jobs:
   update-data:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Setup bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -34,21 +157,32 @@ jobs:
         run: bun test
       - name: Resolve file defaults and manual overrides
         env:
-          CONTROLS: ${{ inputs.controls }}
+          DISPATCH_INPUTS: ${{ toJSON(inputs) }}
+          PROTECTED_SEC_UA: ${{ vars.SEC_UA }}
         run: |
           bun --eval '
             import { resolveControls } from "./scripts/update-data.ts";
             import { appendFile } from "node:fs/promises";
-            const controls = JSON.parse(process.env.CONTROLS?.trim() || "{}");
+            // schedule runs have no dispatch inputs: file defaults apply as-is
+            const inputs = JSON.parse(process.env.DISPATCH_INPUTS || "{}");
+            const advanced = JSON.parse(inputs.advanced || "{}");
+            const individual = Object.fromEntries(Object.entries(inputs)
+              .filter(([key]) => key !== "advanced")
+              .map(([key, value]) => [key.toUpperCase(), value]));
             const file = await Bun.file("scripts/update-data.config.json").json();
-            const resolved = resolveControls(file, controls);
+            // Protected repository Actions variables: highest precedence, applied only when nonblank (never printed).
+            const protectedVars = {};
+            if ((process.env.PROTECTED_SEC_UA ?? "").trim()) protectedVars.SEC_UA = process.env.PROTECTED_SEC_UA.trim();
+            const controls = resolveControls(file, advanced, individual, protectedVars);
             await appendFile(process.env.GITHUB_ENV,
-              Object.entries(resolved).map(([key, value]) => `${key}=${value}\n`).join(""));
+              Object.entries(controls).map(([key, value]) => `${key}=${value}\n`).join(""));
           '
       - name: Generate api/parametric static data
         run: bun ./scripts/update-data.ts
       - name: Commit updated data
         if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           git add api/parametric
           if git diff --cached --quiet -- api/parametric; then
@@ -58,4 +192,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore(data): update Parametric ETF data"
-          git push
+          # Runtime-only auth; no token/header stored in URL, file or Git config.
+          git -c credential.helper= -c credential.helper='!f() { if test "$1" = get; then printf "username=x-access-token\npassword=%s\n" "$GITHUB_TOKEN"; fi; }; f' push

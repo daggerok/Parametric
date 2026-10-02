@@ -11,7 +11,7 @@ import { fileURLToPath as outputFileURLToPath } from 'node:url';
 
 const outputClean = (value: unknown): string => String(value ?? 'null').replace(/[\r\n\t]+/g, ' ');
 /** Presentation only: per-fund retry and fallback notices are printed when VERBOSE is enabled. */
-const outputVerbose = (): boolean => /^(1|true|yes|on)$/i.test((globalThis as any).process?.env?.VERBOSE ?? '');
+const outputVerbose = (): boolean => /^(1|true|yes|y|on)$/i.test((globalThis as any).process?.env?.VERBOSE ?? '');
 function outputNote(message: string): void { if (outputVerbose()) console.warn(message); }
 /** Names are the canonical environment knobs, not internal parser properties. */
 function outputConfigEntries(config: Record<string, any>): [string, string][] {
@@ -40,7 +40,7 @@ function outputConfigEntries(config: Record<string, any>): [string, string][] {
 }
 function outputPrintConfig(brand: string, config: Record<string, any>): void {
   const entries: [string, string][] = [...outputConfigEntries(config), ['VERBOSE', String(outputVerbose())]];
-  console.log(`[ config   ] ${brand} updater:\n${entries.map(([key, value]) => `              ${key}=${/TOKEN|PASSWORD|SECRET|COOKIE/i.test(key) ? '<redacted>' : outputClean(value)}`).join('\n')}`);
+  console.log(`[ config   ] ${brand} updater:\n${entries.map(([key, value]) => `              ${key}=${/TOKEN|PASSWORD|SECRET|COOKIE|SEC_UA/i.test(key) ? '<redacted>' : outputClean(value)}`).join('\n')}`);
 }
 function outputHasOutputFilters(config: Record<string, any>): boolean {
   return outputConfigEntries(config).some(([name, value]) =>
@@ -145,7 +145,7 @@ const EDGAR_BROWSE_URL = 'https://www.sec.gov/cgi-bin/browse-edgar';
 // registrant CIK + series/class ids, and operating company name -> ticker.
 const SEC_FUND_TICKERS_URL = 'https://www.sec.gov/files/company_tickers_mf.json';
 const SEC_COMPANY_TICKERS_URL = 'https://www.sec.gov/files/company_tickers.json';
-const SEC_UA_DEFAULT = 'daggerok Parametric ETF feed (https://github.com/daggerok/Parametric)';
+const SEC_UA_DEFAULT = 'daggerok ETF feed daggerok@gmail.com';
 // The issuer sits behind an Akamai bot manager that answers 403 to a plain
 // fetch, from both this sandbox and GitHub Actions runners (verified
 // 2026-10-01). The read-only rendering proxy is the documented sibling
@@ -337,7 +337,7 @@ type ReturnPeriod = 'YTD' | '1Y' | '3Y' | '5Y' | '10Y';
 const RETURN_PERIODS: readonly ReturnPeriod[] = ['YTD', '1Y', '3Y', '5Y', '10Y'];
 type RangeMap = Partial<Record<ReturnPeriod, Range>>;
 
-type UpdaterConfig = {
+export type UpdaterConfig = {
   concurrency: number;
   requestSleep: number;
   maxFetches: number;
@@ -371,30 +371,32 @@ type AumPreset = keyof typeof AUM_PRESET_BOUNDS;
 
 const AMOUNT_SUFFIXES: Record<string, number> = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 };
 
-function envValue(env: Record<string, string | undefined>, name: string, aliases: string[] = []): string {
-  for (const key of [`PARAMETRIC_${name}`, name, ...aliases]) {
-    const value = env[key];
-    if (value !== undefined && value.trim() !== '') return value.trim();
-  }
-  return '';
+// Resolved controls always use the canonical UPPER_CASE names (see
+// resolveControls); a blank value means "use the built-in default".
+function controlValue(env: Record<string, string | undefined>, name: string): string {
+  return String(env[name] ?? '').trim();
 }
 
-function parsePositiveInt(raw: string, fallback: number): number {
-  const value = Number.parseInt(raw, 10);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
-}
-
-function parseNonNegativeFloat(raw: string, fallback: number): number {
-  if (!raw.trim()) return fallback;
+function parseInteger(raw: string, name: string, min: number, fallback: number): number {
+  if (raw === '') return fallback;
   const value = Number(raw);
-  return Number.isFinite(value) && value >= 0 ? value : fallback;
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < min) throw new Error(`${name}: expected integer >= ${min}`);
+  return value;
 }
 
-function parseBoolean(raw: string, fallback = false): boolean {
-  const text = String(raw ?? '').trim().toLowerCase();
+function parseNonNegativeFloat(raw: string, name: string, fallback: number): number {
+  if (raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) throw new Error(`${name}: expected nonnegative seconds`);
+  return value;
+}
+
+function parseBoolean(raw: string, name: string, fallback: boolean): boolean {
+  const text = raw.trim().toLowerCase();
+  if (text === '') return fallback;
   if (['1', 'true', 'yes', 'y', 'on'].includes(text)) return true;
   if (['0', 'false', 'no', 'n', 'off'].includes(text)) return false;
-  return fallback;
+  throw new Error(`${name}: expected boolean`);
 }
 
 // Strict "min:max" ranges (same parser and errors as the sibling repos).
@@ -453,93 +455,71 @@ export function parseAumRange(raw: string): (Range & { source?: string }) | unde
 function parseRanges(env: Record<string, string | undefined>, prefix: 'PERFORMANCE' | 'TOTAL_RETURN'): RangeMap {
   const ranges: RangeMap = {};
   for (const period of RETURN_PERIODS) {
-    const parsed = parseRange(envValue(env, `${prefix}_${period}`), `${prefix}_${period}`);
+    const parsed = parseRange(controlValue(env, `${prefix}_${period}`), `${prefix}_${period}`);
     if (parsed) ranges[period] = parsed;
   }
   return ranges;
 }
 
-export function readConfig(env: Record<string, string | undefined> = process.env): UpdaterConfig {
+export function readConfig(env: Record<string, string | undefined> = {}): UpdaterConfig {
+  const historyRange = controlValue(env, 'HISTORY_RANGE') || 'max';
+  if (!/^(max|[1-9]\d*y)$/i.test(historyRange)) throw new Error('HISTORY_RANGE: use max or Ny');
   return {
-    concurrency: parsePositiveInt(envValue(env, 'CONCURRENCY'), CONCURRENCY_FALLBACK),
-    requestSleep: parseNonNegativeFloat(envValue(env, 'REQUEST_SLEEP'), REQUEST_SLEEP_FALLBACK),
-    maxFetches: parsePositiveInt(envValue(env, 'MAX_FETCHES', ['PARAMETRIC_LIMIT']), 0),
-    holdingsPageSize: parsePositiveInt(envValue(env, 'HOLDINGS_PAGE_SIZE'), HOLDINGS_PAGE_SIZE_FALLBACK),
-    historyPageSize: parsePositiveInt(envValue(env, 'HISTORY_PAGE_SIZE', ['HISTORICAL_PAGE_SIZE']), HISTORY_PAGE_SIZE_FALLBACK),
-    storeRawDownloads: parseBoolean(envValue(env, 'STORE_RAW_DOWNLOADS'), false),
-    maxRetries: parseNonNegativeFloat(envValue(env, 'MAX_RETRIES'), MAX_RETRIES_FALLBACK),
-    tickers: envValue(env, 'TICKERS')
+    concurrency: parseInteger(controlValue(env, 'CONCURRENCY'), 'CONCURRENCY', 1, CONCURRENCY_FALLBACK),
+    requestSleep: parseNonNegativeFloat(controlValue(env, 'REQUEST_SLEEP'), 'REQUEST_SLEEP', REQUEST_SLEEP_FALLBACK),
+    maxFetches: parseInteger(controlValue(env, 'MAX_FETCHES'), 'MAX_FETCHES', 0, 0),
+    holdingsPageSize: parseInteger(controlValue(env, 'HOLDINGS_PAGE_SIZE'), 'HOLDINGS_PAGE_SIZE', 1, HOLDINGS_PAGE_SIZE_FALLBACK),
+    historyPageSize: parseInteger(controlValue(env, 'HISTORY_PAGE_SIZE'), 'HISTORY_PAGE_SIZE', 1, HISTORY_PAGE_SIZE_FALLBACK),
+    storeRawDownloads: parseBoolean(controlValue(env, 'STORE_RAW_DOWNLOADS'), 'STORE_RAW_DOWNLOADS', false),
+    maxRetries: parseInteger(controlValue(env, 'MAX_RETRIES'), 'MAX_RETRIES', 1, MAX_RETRIES_FALLBACK),
+    tickers: controlValue(env, 'TICKERS')
       .split(/[\s,;]+/)
       .map(sanitizeTicker)
       .filter(Boolean),
-    historyRange: envValue(env, 'HISTORY_RANGE') || 'max',
-    catalogUrl: envValue(env, 'CATALOG_URL') || ISSUER_CATALOG,
-    secUa: envValue(env, 'SEC_UA') || SEC_UA_DEFAULT,
-    skipYahoo: parseBoolean(envValue(env, 'SKIP_YAHOO'), false),
-    skipIssuer: parseBoolean(envValue(env, 'SKIP_ISSUER'), false),
-    edgarFallback: parseBoolean(envValue(env, 'EDGAR_FALLBACK'), true),
-    aumRange: parseAumRange(envValue(env, 'AUM')),
-    terRange: parseRange(envValue(env, 'TER'), 'TER'),
-    dividendYieldRange: parseRange(envValue(env, 'DIVIDEND_YIELD'), 'DIVIDEND_YIELD'),
-    secYieldRange: parseRange(envValue(env, 'SEC_YIELD'), 'SEC_YIELD'),
+    historyRange,
+    catalogUrl: controlValue(env, 'CATALOG_URL') || ISSUER_CATALOG,
+    secUa: controlValue(env, 'SEC_UA') || SEC_UA_DEFAULT,
+    skipYahoo: parseBoolean(controlValue(env, 'SKIP_YAHOO'), 'SKIP_YAHOO', false),
+    skipIssuer: parseBoolean(controlValue(env, 'SKIP_ISSUER'), 'SKIP_ISSUER', false),
+    edgarFallback: parseBoolean(controlValue(env, 'EDGAR_FALLBACK'), 'EDGAR_FALLBACK', true),
+    aumRange: parseAumRange(controlValue(env, 'AUM')),
+    terRange: parseRange(controlValue(env, 'TER'), 'TER'),
+    dividendYieldRange: parseRange(controlValue(env, 'DIVIDEND_YIELD'), 'DIVIDEND_YIELD'),
+    secYieldRange: parseRange(controlValue(env, 'SEC_YIELD'), 'SEC_YIELD'),
     performanceRanges: parseRanges(env, 'PERFORMANCE'),
     totalReturnRanges: parseRanges(env, 'TOTAL_RETURN'),
   };
 }
 
-function rangeLabel(range?: Range): string {
-  if (!range) return 'any';
-  const min = range.min === undefined ? '' : String(range.min);
-  const max = range.max === undefined ? '' : String(range.max);
-  return `${min}:${max}`;
-}
-
-function configLines(config: UpdaterConfig): string[] {
-  return [
-    `CONCURRENCY         ${config.concurrency}`,
-    `REQUEST_SLEEP       ${config.requestSleep} s between outgoing request starts per worker`,
-    `MAX_FETCHES         ${config.maxFetches === 0 ? 'all eligible funds (full pass, cursor ignored)' : `${config.maxFetches} per run (resumes after the saved cursor)`}`,
-    `HOLDINGS_PAGE_SIZE  ${config.holdingsPageSize}`,
-    `HISTORY_PAGE_SIZE   ${config.historyPageSize}`,
-    `STORE_RAW_DOWNLOADS ${config.storeRawDownloads ? 'on' : 'off'}`,
-    `MAX_RETRIES         ${config.maxRetries}`,
-    `TICKERS             ${config.tickers.length ? config.tickers.join(' ') : 'all Parametric ETFs in the catalog'}`,
-    `HISTORY_RANGE       ${config.historyRange} (Yahoo chart range)`,
-    `CATALOG_URL         ${config.catalogUrl}`,
-    `AUM                 ${rangeLabel(config.aumRange)}`,
-    `TER                 ${rangeLabel(config.terRange)}`,
-    `DIVIDEND_YIELD      ${rangeLabel(config.dividendYieldRange)}`,
-    `SEC_YIELD           ${rangeLabel(config.secYieldRange)}`,
-    `PERFORMANCE_*       ${RETURN_PERIODS.filter((p) => config.performanceRanges[p]).map((p) => `${p}=${rangeLabel(config.performanceRanges[p])}`).join(' ') || 'any'}`,
-    `TOTAL_RETURN_*      ${RETURN_PERIODS.filter((p) => config.totalReturnRanges[p]).map((p) => `${p}=${rangeLabel(config.totalReturnRanges[p])}`).join(' ') || 'any'}`,
-    `SEC_UA              ${config.secUa}`,
-    `SKIP_YAHOO          ${config.skipYahoo}`,
-    `SKIP_ISSUER         ${config.skipIssuer}`,
-    `EDGAR_FALLBACK      ${config.edgarFallback}`,
-  ];
-}
-
 const USAGE = `Parametric ETF static data updater (Bun, no dependencies).
-Usage: bun scripts/update-data.ts [-h|--help]
-Defaults: CONCURRENCY=1 REQUEST_SLEEP=3 MAX_RETRIES=2 MAX_FETCHES=0 (all)
-TICKERS="PAPI PHEQ PEPS" selects exact funds before network work or MAX_FETCHES.
-HOLDINGS_PAGE_SIZE=250 HISTORY_PAGE_SIZE=1000 HISTORY_RANGE=max (Yahoo chart)
-STORE_RAW_DOWNLOADS=0 SKIP_ISSUER=0 SKIP_YAHOO=0 EDGAR_FALLBACK=1 VERBOSE=0
-CATALOG_URL=${ISSUER_CATALOG}
-SEC_UA=${SEC_UA_DEFAULT}
-AUM=min:max or nano/micro/small/mid/large (bounds accept K/M/B/T)
-TER=min:max DIVIDEND_YIELD=min:max SEC_YIELD=min:max
-PERFORMANCE_{YTD,1Y,3Y,5Y,10Y}=min:max (annualized for 3Y+)
-TOTAL_RETURN_{YTD,1Y,3Y,5Y,10Y}=min:max (cumulative)
-All canonical controls accept PARAMETRIC_ prefix at runtime (including VERBOSE).
-File defaults: scripts/update-data.config.json; environment overrides the file.
+Usage: ./scripts/update-data.ts [-h|--help]   (or: bun scripts/update-data.ts)
+Every control is an UPPER_CASE environment variable. Precedence (later wins):
+  scripts/update-data.config.json < advanced JSON < nonblank workflow inputs < environment < protected Actions variable
+An explicitly set environment variable wins even when empty (it clears the control).
+Invalid values are rejected before any request or write; nothing is silently ignored.
+PARAMETRIC_<NAME> takes precedence over <NAME>; PARAMETRIC_LIMIT (MAX_FETCHES) and HISTORICAL_PAGE_SIZE (HISTORY_PAGE_SIZE) are accepted aliases.
+Controls (defaults live in the config file):
+  MAX_FETCHES=0          batch size; 0 or empty is a full pass (cursor in api/parametric/update-state.json)
+  REQUEST_SLEEP=3        seconds between request starts within each worker
+  CONCURRENCY=1          independently paced fund workers (integer >= 1)
+  TICKERS="PAPI PHEQ"    exact fund allowlist, applied before MAX_FETCHES
+  AUM                    min:max or nano/micro/small/mid/large (bounds accept K/M/B/T)
+  TER DIVIDEND_YIELD SEC_YIELD   min:max percentages
+  ${RETURN_PERIODS.map((p) => `PERFORMANCE_${p}`).join(' ')}   min:max (annualized for 3Y+)
+  ${RETURN_PERIODS.map((p) => `TOTAL_RETURN_${p}`).join(' ')}   min:max (cumulative)
+  HOLDINGS_PAGE_SIZE=250 HISTORY_PAGE_SIZE=1000   rows per generated JSON page (integers >= 1)
+  MAX_RETRIES=2          retries after the initial request (integer >= 1)
+  HISTORY_RANGE=max      Yahoo history window: max or Ny (for example 5y)
+  SEC_UA                 SEC User-Agent with a contact (default declared in the config file, redacted in logs)
+  SKIP_YAHOO SKIP_ISSUER EDGAR_FALLBACK STORE_RAW_DOWNLOADS VERBOSE   booleans (1/0, true/false, yes/no, on/off)
+  CATALOG_URL            catalog mirror URL (default: ${ISSUER_CATALOG})
 Examples:
-  TICKERS="PAPI PHEQ PEPS" VERBOSE=1 bun scripts/update-data.ts
-  MAX_FETCHES=3 AUM="100M:" TER=":0.5" bun scripts/update-data.ts
-Official holdings come from eatonvance.com when it publishes a full sheet and
-from SEC EDGAR Form N-PORT-P otherwise; NAV history and dividends come from the
-Yahoo Finance chart API. Full passes clear update-state.json. No provider data
-is deleted on fetch failure.
+  TICKERS="PAPI PHEQ PEPS" VERBOSE=1 ./scripts/update-data.ts
+  CONCURRENCY=15 REQUEST_SLEEP=3 ./scripts/update-data.ts
+  MAX_FETCHES=3 AUM="100M:" TER=":0.5" ./scripts/update-data.ts
+Official holdings come from eatonvance.com when it publishes a full sheet and from SEC EDGAR Form N-PORT-P
+otherwise; NAV history and dividends come from the Yahoo Finance chart API. Full passes clear update-state.json.
+No provider data is deleted on fetch failure.
 `;
 
 // Only a lane's timer reservations are queued, never network operations. Each
@@ -770,10 +750,10 @@ export type CatalogFund = {
   secYieldDate?: string | null;
   frequencyCode?: string;
   frequency?: string;
-  premiumDiscountAmount?: number | null;
   ter: number | null;
   nav: number | null;
   close: number | null;
+  premiumDiscount: number | null;
   premiumDiscountAmount: number | null;
   netAssets: number | null;
   dividendYield: number | null;
@@ -1306,7 +1286,7 @@ export function parseChart(payload: JsonRecord): ParsedChart {
   };
 }
 
-function chartUrl(ticker: string, config: UpdaterConfig): string {
+export function chartUrl(ticker: string, config: UpdaterConfig): string {
   // Explicit period1/period2: `range=max` silently downgrades to monthly bars.
   const period2 = Math.floor(Date.now() / 1000);
   let period1 = 0; // "max"
@@ -1529,6 +1509,7 @@ export function fundFilterReasons(
   if (config.dividendYieldRange && !inRange(numberOrNull(candidate.metrics.dividendYield), config.dividendYieldRange)) {
     reasons.push('DIVIDEND_YIELD');
   }
+  if (config.secYieldRange && !inRange(numberOrNull(candidate.metrics.secYield), config.secYieldRange)) reasons.push('SEC_YIELD');
   for (const period of RETURN_PERIODS) {
     const performance = config.performanceRanges[period];
     if (performance && !inRange(annualizedValue(candidate.metrics, period), performance)) reasons.push(`PERFORMANCE_${period}`);
@@ -2225,33 +2206,38 @@ async function storeRaw(ticker: string, name: string, payload: unknown): Promise
 
 const cikByTicker = new Map<string, string | null>();
 
-// Lazily fetched, cached-per-run SEC lookup tables.
-let fundTickerMap: Map<string, SecSeriesRef> | null = null;
-let companyTickerMap: Map<string, string> | null = null;
+// Lazily fetched, cached-per-run SEC lookup tables. The promise is cached, so
+// concurrent workers share one request instead of each fetching the table.
+let fundTickerMap: Promise<Map<string, SecSeriesRef>> | null = null;
+let companyTickerMap: Promise<Map<string, string>> | null = null;
 
-async function loadFundTickerMap(config: UpdaterConfig): Promise<Map<string, SecSeriesRef>> {
-  if (fundTickerMap) return fundTickerMap;
-  try {
-    const payload = await fetchSecJson(SEC_FUND_TICKERS_URL, '[edgar   ] fund ticker table', config);
-    fundTickerMap = parseFundTickerMap(payload);
-    outputNote(`[ edgar    ] SEC fund ticker table: ${fundTickerMap.size} ETF / mutual-fund share classes`);
-  } catch (error) {
-    console.warn(`[ edgar    ] fund ticker table: ${errorMessage(error)} — falling back to full-text search`);
-    fundTickerMap = new Map<string, SecSeriesRef>();
-  }
+function loadFundTickerMap(config: UpdaterConfig): Promise<Map<string, SecSeriesRef>> {
+  fundTickerMap ??= (async () => {
+    try {
+      const payload = await fetchSecJson(SEC_FUND_TICKERS_URL, '[edgar   ] fund ticker table', config);
+      const map = parseFundTickerMap(payload);
+      outputNote(`[ edgar    ] SEC fund ticker table: ${map.size} ETF / mutual-fund share classes`);
+      return map;
+    } catch (error) {
+      console.warn(`[ edgar    ] fund ticker table: ${errorMessage(error)} — falling back to full-text search`);
+      return new Map<string, SecSeriesRef>();
+    }
+  })();
   return fundTickerMap;
 }
 
-async function loadCompanyTickerMap(config: UpdaterConfig): Promise<Map<string, string>> {
-  if (companyTickerMap) return companyTickerMap;
-  try {
-    const payload = await fetchSecJson(SEC_COMPANY_TICKERS_URL, '[edgar   ] company ticker table', config);
-    companyTickerMap = parseCompanyTickerMap(payload);
-    outputNote(`[ edgar    ] SEC company ticker table: ${companyTickerMap.size} issuer names`);
-  } catch (error) {
-    console.warn(`[ edgar    ] company ticker table: ${errorMessage(error)} — N-PORT tickers stay "-"`);
-    companyTickerMap = new Map<string, string>();
-  }
+function loadCompanyTickerMap(config: UpdaterConfig): Promise<Map<string, string>> {
+  companyTickerMap ??= (async () => {
+    try {
+      const payload = await fetchSecJson(SEC_COMPANY_TICKERS_URL, '[edgar   ] company ticker table', config);
+      const map = parseCompanyTickerMap(payload);
+      outputNote(`[ edgar    ] SEC company ticker table: ${map.size} issuer names`);
+      return map;
+    } catch (error) {
+      console.warn(`[ edgar    ] company ticker table: ${errorMessage(error)} — N-PORT tickers stay "-"`);
+      return new Map<string, string>();
+    }
+  })();
   return companyTickerMap;
 }
 
@@ -2737,51 +2723,93 @@ async function processFund(
 // Main
 // ---------------------------------------------------------------------------
 
-// File defaults and explicit overrides. Allowlisted scalar values only: the
-// same resolver is used by Actions without interpolating user input into bash.
+// File defaults and explicit overrides: allowlisted scalar controls only, so
+// GitHub Actions can resolve them without interpolating user input into bash.
+// Precedence: config file < advanced JSON < nonblank named inputs < environment
+// (an explicitly set variable wins even when empty; `PARAMETRIC_<KEY>` wins over
+// `<KEY>`) < protected Actions variables (passed by the workflow as `env`).
 export const CONTROL_NAMES = [
-  'MAX_FETCHES','REQUEST_SLEEP','CONCURRENCY','AUM','TER','DIVIDEND_YIELD','SEC_YIELD','TICKERS',
-  'HOLDINGS_PAGE_SIZE','HISTORY_PAGE_SIZE','MAX_RETRIES','HISTORY_RANGE','STORE_RAW_DOWNLOADS',
-  'CATALOG_URL','SEC_UA','SKIP_YAHOO','SKIP_ISSUER','EDGAR_FALLBACK','VERBOSE',
-  ...['PERFORMANCE','TOTAL_RETURN'].flatMap(prefix=>['YTD','1Y','3Y','5Y','10Y'].map(period=>`${prefix}_${period}`)),
+  'MAX_FETCHES', 'REQUEST_SLEEP', 'CONCURRENCY', 'AUM', 'TER', 'DIVIDEND_YIELD', 'SEC_YIELD', 'TICKERS',
+  'HOLDINGS_PAGE_SIZE', 'HISTORY_PAGE_SIZE', 'MAX_RETRIES', 'HISTORY_RANGE', 'STORE_RAW_DOWNLOADS',
+  'CATALOG_URL', 'SEC_UA', 'SKIP_YAHOO', 'SKIP_ISSUER', 'EDGAR_FALLBACK', 'VERBOSE',
+  ...['PERFORMANCE', 'TOTAL_RETURN'].flatMap((prefix) => RETURN_PERIODS.map((period) => `${prefix}_${period}`)),
 ] as const;
-export function resolveControls(file:unknown={},advanced:unknown={},inputs:unknown={},env:Record<string,string|undefined>={}):Record<string,string> {
-  const result:Record<string,string>={};
-  const apply=(value:unknown,skipEmpty=false)=>{
-    if (!value || typeof value!=='object' || Array.isArray(value)) throw new Error('Configuration must be a JSON object');
-    for (const [key,raw] of Object.entries(value)) {
-      if (!(CONTROL_NAMES as readonly string[]).includes(key)) throw new Error(`Unknown updater control: ${key}`);
-      if (skipEmpty && (raw===''||raw===undefined||raw===null)) continue;
-      if (!['string','number','boolean'].includes(typeof raw)) throw new Error(`${key}: expected string, number or boolean`);
-      const text=String(raw);
+export type ControlName = (typeof CONTROL_NAMES)[number];
+export const CONFIG_FILE_URL = new URL('./update-data.config.json', import.meta.url);
+// Legacy environment aliases that keep working next to PARAMETRIC_<NAME> and <NAME>.
+const CONTROL_ALIASES: Partial<Record<ControlName, string[]>> = {
+  MAX_FETCHES: ['PARAMETRIC_LIMIT'],
+  HISTORY_PAGE_SIZE: ['HISTORICAL_PAGE_SIZE'],
+};
+
+export function resolveControls(
+  file: unknown = {},
+  advanced: unknown = {},
+  inputs: unknown = {},
+  env: Record<string, string | undefined> = {},
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  const known = new Set<string>(CONTROL_NAMES);
+  const apply = (value: unknown, skipEmpty = false): void => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Configuration must be a JSON object');
+    for (const [key, raw] of Object.entries(value)) {
+      if (!known.has(key)) throw new Error(`Unknown updater control: ${key}`);
+      if (skipEmpty && (raw === '' || raw === undefined || raw === null)) continue;
+      if (!['string', 'number', 'boolean'].includes(typeof raw)) throw new Error(`${key}: expected string, number or boolean`);
+      const text = String(raw);
       if (/[\r\n\0]/.test(text)) throw new Error(`${key}: multiline/control characters are not allowed`);
-      result[key]=text;
+      result[key] = text;
     }
   };
-  apply(file);apply(advanced);apply(inputs,true);
-  for(const key of CONTROL_NAMES){
-    const value=env[`PARAMETRIC_${key}`]??env[key];
-    if(value!==undefined)apply({[key]:value});
+  apply(file);
+  apply(advanced);
+  apply(inputs, true);
+  for (const key of CONTROL_NAMES) {
+    const value = env[`PARAMETRIC_${key}`] ?? env[key] ?? CONTROL_ALIASES[key]?.map((alias) => env[alias]).find((v) => v !== undefined);
+    if (value !== undefined) apply({ [key]: value });
   }
-  for(const key of ['MAX_FETCHES','CONCURRENCY','HOLDINGS_PAGE_SIZE','HISTORY_PAGE_SIZE','MAX_RETRIES']){
-    const v=result[key];if(v===undefined||v==='')continue;
-    const min=['MAX_FETCHES','MAX_RETRIES'].includes(key)?0:1;
-    if(!/^\d+$/.test(v)||!Number.isSafeInteger(Number(v))||Number(v)<min)throw new Error(`${key}: expected integer >= ${min}`);
+  for (const key of ['MAX_FETCHES', 'CONCURRENCY', 'HOLDINGS_PAGE_SIZE', 'HISTORY_PAGE_SIZE', 'MAX_RETRIES']) {
+    const v = result[key];
+    if (v === undefined || v === '') continue;
+    const min = key === 'MAX_FETCHES' ? 0 : 1;
+    if (!/^\d+$/.test(v) || !Number.isSafeInteger(Number(v)) || Number(v) < min) throw new Error(`${key}: expected integer >= ${min}`);
   }
-  if(result.REQUEST_SLEEP && (!Number.isFinite(Number(result.REQUEST_SLEEP))||Number(result.REQUEST_SLEEP)<0))throw new Error('REQUEST_SLEEP: expected nonnegative seconds');
-  if(result.HISTORY_RANGE && !/^(max|[1-9]\d*y)$/i.test(result.HISTORY_RANGE))throw new Error('HISTORY_RANGE: use max or Ny');
-  for(const key of ['STORE_RAW_DOWNLOADS','SKIP_YAHOO','SKIP_ISSUER','EDGAR_FALLBACK','VERBOSE']){
-    if(result[key] && !/^(0|1|true|false|yes|no|y|n|on|off)$/i.test(result[key]))throw new Error(`${key}: expected boolean`);
+  if (result.REQUEST_SLEEP && (!Number.isFinite(Number(result.REQUEST_SLEEP)) || Number(result.REQUEST_SLEEP) < 0)) throw new Error('REQUEST_SLEEP: expected nonnegative seconds');
+  if (result.HISTORY_RANGE && !/^(max|[1-9]\d*y)$/i.test(result.HISTORY_RANGE)) throw new Error('HISTORY_RANGE: use max or Ny');
+  for (const key of ['STORE_RAW_DOWNLOADS', 'SKIP_YAHOO', 'SKIP_ISSUER', 'EDGAR_FALLBACK', 'VERBOSE']) {
+    if (result[key] && !/^(0|1|true|false|yes|no|y|n|on|off)$/i.test(result[key])) throw new Error(`${key}: expected boolean`);
   }
-  if(result.CATALOG_URL && !/^https?:\/\/\S+$/.test(result.CATALOG_URL))throw new Error('CATALOG_URL: expected an absolute URL');
-  readConfig(result); // validate all min:max filters before a request or write
+  if (result.CATALOG_URL && !/^https?:\/\/\S+$/.test(result.CATALOG_URL)) throw new Error('CATALOG_URL: expected an absolute URL');
+  readConfig(result); // validate every min:max filter before any request or write
   return result;
 }
-async function runtimeControls(env:Record<string,string|undefined>):Promise<Record<string,string>> {
-  let file:unknown={};
-  try {file=JSON.parse(await readFile(new URL('./update-data.config.json',import.meta.url),'utf8'));}
-  catch(e) {if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
-  return resolveControls(file,{}, {},env);
+
+export async function runtimeControls(env: Record<string, string | undefined> = process.env): Promise<Record<string, string>> {
+  let file: unknown = {};
+  try { file = JSON.parse(await readFile(CONFIG_FILE_URL, 'utf8')); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  return resolveControls(file, {}, {}, env);
+}
+
+/**
+ * Fund worker pool: `workers` independent workers drain one queue, each inside
+ * its own request lane (REQUEST_SLEEP applies per worker, so workers fetch in
+ * parallel; there is no global request-start queue).
+ */
+export async function runPool<T>(items: T[], workers: number, delayMs: number, handle: (item: T) => Promise<void>): Promise<void> {
+  const queue = [...items];
+  const worker = async (): Promise<void> => {
+    for (let item = queue.shift(); item !== undefined; item = queue.shift()) await handle(item);
+  };
+  const count = Math.max(1, Math.min(workers, items.length));
+  await Promise.all(Array.from({ length: count }, () => withRequestLane(delayMs, worker)));
+}
+
+// The saved cursor is the last fund of the batch (in batch order) that updated
+// successfully, independent of which concurrent worker finished first.
+export function nextCursor(batch: Array<{ ticker: string }>, succeeded: Set<string>, previous: string | null): string | null {
+  for (let i = batch.length - 1; i >= 0; i--) if (succeeded.has(batch[i].ticker)) return batch[i].ticker;
+  return previous;
 }
 
 export function batchSelection(funds: CatalogFund[], config: UpdaterConfig, cursor: string | null): CatalogFund[] {
@@ -2836,41 +2864,27 @@ async function main(): Promise<void> {
   // cursor only rotates the queue for explicitly bounded batch runs.
   const cursor = config.maxFetches > 0 ? state?.cursor || null : null;
   const selected = batchSelection(universe, config, cursor);
-  const queue = selected.map((fund) => ({ fund }));
   const results: JsonRecord[] = [];
-  let processed = 0;
-  let lastProcessedTicker: string | null = cursor;
+  const succeeded = new Set<string>();
   let failures = 0;
 
   outputPrintFilter(selected.length, universe.length, outputHasOutputFilters(config));
-  const output = outputCreateReporter(API_ROOT, config.maxFetches > 0 ? Math.min(config.maxFetches, selected.length) : selected.length);
-  async function worker(): Promise<void> {
-    for (;;) {
-      const item = queue.shift();
-      if (!item) return;
-      if (config.maxFetches > 0 && processed >= config.maxFetches) return;
-      processed += 1;
-      const before = await output.before(item.fund.ticker);
-      try {
-        const row = await processFund(item.fund, config, previousIndex.get(item.fund.ticker) || {});
-        if (row) {
-          results.push(retainUnavailable(row, previousIndex.get(item.fund.ticker)) as JsonRecord);
-          lastProcessedTicker = item.fund.ticker;
-        }
-        await output.result(item.fund.ticker, before, row ? undefined : 'skipped');
-      } catch (error) {
-        failures += 1;
-        await output.result(item.fund.ticker, before, 'failed', String(error));
+  const output = outputCreateReporter(API_ROOT, selected.length);
+  await runPool(selected, config.concurrency, requestSleepMs, async (fund) => {
+    const before = await output.before(fund.ticker);
+    try {
+      const row = await processFund(fund, config, previousIndex.get(fund.ticker) || {});
+      if (row) {
+        results.push(retainUnavailable(row, previousIndex.get(fund.ticker)) as JsonRecord);
+        succeeded.add(fund.ticker);
       }
-      if (config.maxFetches > 0 && processed >= config.maxFetches) {
-        console.log(`[ cursor   ] batch of ${config.maxFetches} reached — rerun to continue after ${lastProcessedTicker}`);
-        return;
-      }
+      await output.result(fund.ticker, before, row ? undefined : 'skipped');
+    } catch (error) {
+      failures += 1;
+      await output.result(fund.ticker, before, 'failed', String(error));
     }
-  }
-
-  const workerCount = Math.min(config.concurrency, selected.length, config.maxFetches || selected.length);
-  await Promise.all(Array.from({ length: workerCount }, () => withRequestLane(requestSleepMs, worker)));
+  });
+  const lastProcessedTicker = nextCursor(selected, succeeded, cursor);
 
   // Funds not selected for a successful update keep their previously published rows.
   const keptFromPrevious = universe
@@ -2925,7 +2939,6 @@ if ((import.meta as { main?: boolean }).main) {
   if (process.argv.includes('-h') || process.argv.includes('--help')) {
     console.log(USAGE.trim());
     outputPrintConfig('Parametric effective configuration', readConfig(await runtimeControls(process.env)));
-    console.log('Defaults: scripts/update-data.config.json; explicit environment overrides the file. Actions: file < advanced JSON < individual nonblank inputs.');
   } else {
     await main().catch((error) => {
       console.error(error instanceof Error ? error.stack : String(error));
