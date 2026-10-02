@@ -71,7 +71,7 @@
  "returns": {
   "derivedFrom": "official Eaton Vance / MSIM published returns; month-to-date and history-derived periods use the Yahoo Finance adjusted series",
   "monthEnd": {
-   "asOfDate": "Oct 01 2026",
+   "asOfDate": "Sep 30 2026",
    "mo1": -4.34,
    "mo1Text": "-4.34%",
    "qtd": null,
@@ -264,7 +264,7 @@
   ],
   "pageSize": 1000,
   "totalRows": 740,
-  "asOf": "Oct 01 2026",
+  "asOf": "Sep 30 2026",
   "source": "Yahoo Finance public chart API (adjusted close)"
  }
 }
