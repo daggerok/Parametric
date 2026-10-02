@@ -13,3 +13,28 @@ transport probe — 2026-10-02T02:06:19Z run 36954066028
   [markdown/other] jina-default :: Title: Morgan Stanley ETF Trust  (0001676326)  URL Source: https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CI
   [markdown/other] jina-return-html :: <html><head><title>Morgan Stanley ETF Trust  (0001676326)</title><meta name="description" content=""></head><body><div><
   [markdown/other] jina-accept-xml-only :: Title: Morgan Stanley ETF Trust  (0001676326)  URL Source: https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CI
+transport probe — 2026-10-02T02:07:07Z run 36954125611
+== N-PORT primary_doc.xml (looking for <genInfo>) ==
+  [markdown/other] jina-default :: Title: edgarSubmission  URL Source: https://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml  
+  [markdown/other] jina-browser-accept :: <!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title><meta http-equiv="Content-Type" content="text/htm
+  [markdown/other] jina-accept-xml-only :: Title: edgarSubmission  URL Source: https://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml  
+  [markdown/other] jina-accept-json :: Title: edgarSubmission  URL Source: https://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml  
+  [markdown/other] jina-return-html :: <edgarsubmission xmlns="http://www.sec.gov/edgar/nport" xmlns:com="http://www.sec.gov/edgar/common" xmlns:ncom="http://w
+  [markdown/other] jina-return-text :: Title: edgarSubmission  URL Source: https://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml  
+  [markdown/other] jina-respond-html :: <edgarsubmission xmlns="http://www.sec.gov/edgar/nport" xmlns:com="http://www.sec.gov/edgar/common" xmlns:ncom="http://w
+  [markdown/other] jina-http-scheme :: Title: edgarSubmission  URL Source: http://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml  P
+  [markdown/other] direct-browser-ua :: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"
+== browse-edgar Atom feed (looking for <feed) ==
+  [markdown/other] jina-default :: Title: Morgan Stanley ETF Trust  (0001676326)  URL Source: https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CI
+  [markdown/other] jina-return-html :: <html><head><title>Morgan Stanley ETF Trust  (0001676326)</title><meta name="description" content=""></head><body><div><
+  [markdown/other] jina-accept-xml-only :: Title: Morgan Stanley ETF Trust  (0001676326)  URL Source: https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CI
+== N-PORT filings for CIK 0001676326 via jina (X-Return-Format: html) ==
+  NPORT-P filings listed: 197
+  0002071691-26-018753 filed=2026-08-21 rep=2026-06-30 bytes=496972 series=S000083416 name=Eaton Vance Short Duration Municipal Income  invstOrSec=383
+  0002071691-26-018752 filed=2026-08-21 rep=2026-06-30 bytes=211199 series=S000088098 name=Parametric Equity Plus ETF invstOrSec=192
+  0002071691-26-018751 filed=2026-08-21 rep=2026-06-30 bytes=372638 series=S000082248 name=Eaton Vance Ultra-Short Income ETF invstOrSec=288
+  0002071691-26-018750 filed=2026-08-21 rep=2026-06-30 bytes=1244366 series=S000083413 name=Eaton Vance Total Return Bond ETF invstOrSec=955
+  0002071691-26-018749 filed=2026-08-21 rep=2026-06-30 bytes=370538 series=S000082247 name=Eaton Vance Intermediate Municipal Income ET invstOrSec=282
+  0002071691-26-018748 filed=2026-08-21 rep=2026-06-30 bytes=708321 series=S000077959 name=Calvert US Large-Cap Core Responsible Index  invstOrSec=762
+  0002071691-26-018747 filed=2026-08-21 rep=2026-06-30 bytes=568406 series=S000083827 name=Eaton Vance Floating-Rate ETF invstOrSec=445
+  0002071691-26-018746 filed=2026-08-21 rep=2026-06-30 bytes=713823 series=S000077958 name=Calvert International Responsible Index ETF invstOrSec=725
