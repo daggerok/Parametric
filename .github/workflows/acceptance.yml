@@ -8,12 +8,18 @@
 #   2. the same command then runs in the working tree to produce the published
 #      api/parametric seed, and is repeated once more as the byte-stability
 #      witness.
+# Both comparisons are reported twice: raw, and with the run's own
+# "generatedAt" timestamp masked, so timestamp-only churn cannot masquerade as
+# a data change (and a real value change cannot hide behind the timestamp).
 name: TEMP live acceptance (delete before PR)
 
 on:
   push:
     branches: [arena/01a0f9b5-parametric]
-    paths: [.github/workflows/acceptance.yml, scripts/update-data.ts]
+    paths:
+      - .github/workflows/acceptance.yml
+      - scripts/update-data.ts
+      - scripts/update-data.config.json
   workflow_dispatch:
 
 permissions: { contents: write }
@@ -50,7 +56,6 @@ jobs:
           find api -type f | sort | xargs -r sha256sum > /tmp/accept/hashes1.txt
           rc=0; TICKERS="PAPI PHEQ PEPS" VERBOSE=1 bun scripts/update-data.ts > /tmp/accept/run2.log 2>&1 || rc=$?; echo "$rc" > /tmp/accept/rc2
           find api -type f | sort | xargs -r sha256sum > /tmp/accept/hashes2.txt
-          cp -R api /tmp/accept/after-run1
       - name: Repeat the full generation (byte-stability witness)
         run: |
           set -euo pipefail
@@ -63,37 +68,58 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           mkdir -p evidence/live
           REPORT=evidence/live/acceptance.txt
+
+          # Hash every file again with the run's own generatedAt masked, so the
+          # report distinguishes timestamp churn from a real data change.
+          norm() { # <hashes-file> <root-dir>
+            while read -r _ _ path; do
+              [ -n "$path" ] || continue
+              printf '%s  %s\n' "$(sed -E 's/"generatedAt": "[^"]*"/"generatedAt": "-"/' "$2/$path" | sha256sum | cut -d' ' -f1)" "$path"
+            done < "$1"
+          }
+          norm /tmp/accept/hashes1.txt /tmp/accept > /tmp/accept/norm1.txt
+          norm /tmp/accept/hashes2.txt /tmp/accept > /tmp/accept/norm2.txt
+          norm /tmp/full-hashes1.txt "$GITHUB_WORKSPACE" > /tmp/full-norm1.txt
+          norm /tmp/full-hashes2.txt "$GITHUB_WORKSPACE" > /tmp/full-norm2.txt
+
           {
             echo "Parametric live acceptance — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "run: $GITHUB_RUN_ID commit: $GITHUB_SHA runner: ${RUNNER_NAME:-unknown} bun: $(bun --version)"
             echo
             echo '== isolated scoped runs: TICKERS="PAPI PHEQ PEPS" VERBOSE=1 bun scripts/update-data.ts =='
             echo "exit codes: run1=$(cat /tmp/accept/rc1) run2=$(cat /tmp/accept/rc2)"
-            STABLE=no
-            diff -q /tmp/accept/hashes1.txt /tmp/accept/hashes2.txt >/dev/null && STABLE=yes
-            echo "byte-stable: $STABLE"
+            STABLE=no; diff -q /tmp/accept/hashes1.txt /tmp/accept/hashes2.txt >/dev/null && STABLE=yes
+            STABLE_NORM=no; diff -q /tmp/accept/norm1.txt /tmp/accept/norm2.txt >/dev/null && STABLE_NORM=yes
+            echo "byte-stable: $STABLE (ignoring generatedAt: $STABLE_NORM)"
             echo "config: $(awk '/^\[ config/{p=1} p&&/^\[ [a-z]/&&!/^\[ config/{p=0} p{print}' /tmp/accept/run1.log | tr '\n' ' ' | sed 's/  */ /g')"
             echo "files: $(wc -l < /tmp/accept/hashes1.txt) json files"
             echo "hashes (run 1 == run 2):"
             cat /tmp/accept/hashes1.txt
             echo "-- fund reporter lines --"
             grep -aE '^\[ +[0-9]+/' /tmp/accept/run1.log || true
+            echo "-- provider provenance (isolated run) --"
+            grep -aE '^\[ (catalog|issuer|edgar|yahoo|proxy)' /tmp/accept/run1.log | sort -u | head -20 || true
             echo "-- provider warnings / fallbacks --"
             grep -aiE 'warn|fallback|retry|refus' /tmp/accept/run1.log | grep -v EDGAR_FALLBACK | head -20 || true
             echo
             echo "== full generation: bun scripts/update-data.ts (published api/parametric seed) =="
-            FULL_STABLE=no
-            diff -q /tmp/full-hashes1.txt /tmp/full-hashes2.txt >/dev/null && FULL_STABLE=yes
             echo "exit codes: pass1=$(cat /tmp/rc-full1) pass2=$(cat /tmp/rc-full2)"
-            echo "byte-stable pass1->pass2: $FULL_STABLE"
+            FULL_STABLE=no; diff -q /tmp/full-hashes1.txt /tmp/full-hashes2.txt >/dev/null && FULL_STABLE=yes
+            FULL_STABLE_NORM=no; diff -q /tmp/full-norm1.txt /tmp/full-norm2.txt >/dev/null && FULL_STABLE_NORM=yes
+            echo "byte-stable pass1->pass2: $FULL_STABLE (ignoring generatedAt: $FULL_STABLE_NORM)"
             echo "config: $(awk '/^\[ config/{p=1} p&&/^\[ [a-z]/&&!/^\[ config/{p=0} p{print}' /tmp/full1.log | tr '\n' ' ' | sed 's/  */ /g')"
             grep -aE '^\[ catalog|^\[ done|^\[ filter' /tmp/full1.log || true
             python3 -c "import json; d=json.load(open('api/parametric/index.json')); print('published counts:', d['counts']); [print(' ', f['ticker'], 'holdings=' + str(f['holdings']), 'history=' + str(f['history']), 'ter=' + str(f.get('terValue')), 'aum=' + str(f.get('aumValue')), 'divs=' + str((f.get('distributions') or {}).get('frequency'))) for f in d['funds']]"
             echo "-- fund reporter lines (full) --"
             grep -aE '^\[ +[0-9]+/' /tmp/full1.log || true
+            echo "-- provider provenance (full run) --"
+            grep -aE '^\[ (catalog|issuer|edgar|yahoo|proxy)' /tmp/full1.log | sort -u | head -20 || true
             if [ "$FULL_STABLE" = no ]; then
               echo "-- changed files pass1 -> pass2 --"
               diff /tmp/full-hashes1.txt /tmp/full-hashes2.txt | head -20 || true
+              if [ "$FULL_STABLE_NORM" = yes ]; then
+                echo "(only the generatedAt run timestamp changed)"
+              fi
               for changed in $(diff /tmp/full-hashes1.txt /tmp/full-hashes2.txt | awk '/^>/{print $3}'); do
                 echo "-- diff ${changed} (pass1 -> pass2, first 30 lines) --"
                 diff -u "/tmp/after-full1/${changed#api/parametric/}" "$changed" | head -30 || true
