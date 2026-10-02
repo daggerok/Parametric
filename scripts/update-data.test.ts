@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import {
   CONTROL_NAMES, HISTORY_HEADERS, YAHOO_HISTORY_HEADERS, annualizedToTotal, batchSelection, chartUrl,
-  cleanHoldingTicker, deriveCatalogMetrics, eftsSearchUrl, fetchSecJson, fetchSecText, fetchWithRetry,
+  cleanHoldingTicker, deriveCatalogMetrics, isoFromEdgar, eftsSearchUrl, fetchSecJson, fetchSecText, fetchWithRetry,
   fundFilterReasons, holdingsDownloadUrl, indicatedYield, inferDistributionFrequency, isParametricFundUrl,
   issuerFrequency, issuerFundUrl, lastCompletedQuarterEnd, mergeHistory, nextCursor, normalizeHoldingName,
   normalizeHoldingNameCore, normalizeSource, nportBelongsToFund, nportUrlFor, parseAumRange, parseChart,
@@ -235,6 +235,13 @@ describe('parseIssuerProduct', () => {
     expect(product.monthEnd).toMatchObject({
       asOfDate: '2026-09-30', mo1: -5.08, mo3: 0.2, ytd: 7.63, yr1: 9.0, yr3: null, yr5: null, yr10: null, sinceInception: 9.4,
     });
+  });
+
+  test('the returns date comes from the Returns table, not the price date', () => {
+    const shifted = PAPI.replace('As of 09/30/2026 (updated daily upon availability)\n\n|  | 1 Month', 'As of 08/31/2026 (updated daily upon availability)\n\n|  | 1 Month');
+    const product = parseIssuerProduct(shifted, 'PAPI');
+    expect(product.navDate).toBe('2026-09-30');
+    expect(product.monthEnd.asOfDate).toBe('2026-08-31');
   });
 
   test('another fund parses with its own cadence, exchange and expense ratios', () => {
@@ -551,10 +558,29 @@ describe('derived metrics', () => {
 
   test('official published returns win; derived ones only fill the gaps', () => {
     const derived = { asOfDate: '2026-09-30', ytd: 7.1, yr1: 8.2, cagr3y: 9.9, cagr5y: null, cagr10y: null, siAnn: 10.5, mo1: -5.2, qtd: 0.1 };
-    const metrics = deriveCatalogMetrics({ ytd: 7.63, yr1: 9.0, yr3: null, yr5: null, yr10: null, sinceInception: 9.4 }, derived, null, null, 0.176725, 12, 26.28);
+    const metrics = deriveCatalogMetrics({ ytd: 7.63, yr1: 9.0, yr3: null, yr5: null, yr10: null, sinceInception: 9.4 }, derived, null, null, 0.176725, 12, 26.28, null, '2026-09-30');
     expect(metrics).toMatchObject({ ytd: 7.63, tr1y: 9.0, cagr3y: 9.9, siAnn: 9.4 });
     expect(metrics.dividendYield).toBeCloseTo(8.07, 2);
-    expect(metrics.returnsBasis).toContain('official Eaton Vance / MSIM');
+    expect(metrics.returnsBasis).toContain('mixed: official Eaton Vance / MSIM');
+    expect(metrics.returnsBasis).toContain('Yahoo');
+    expect(metrics.performanceAsOf).toBe('2026-09-30');
+  });
+
+  test('metrics end with returnsBasis then performanceAsOf; official date is the returns-table date', () => {
+    const derived = { asOfDate: '2026-10-01', ytd: 7.1, yr1: 8.2, cagr3y: null, cagr5y: null, cagr10y: null, siAnn: null, mo1: null, qtd: null };
+    const official = { ytd: 7.63, yr1: 9.0, yr3: null, yr5: null, yr10: null, sinceInception: 9.4 };
+    const metrics = deriveCatalogMetrics(official, derived, null, null, null, null, 26.28, null, '2026-09-30');
+    expect(Object.keys(metrics).slice(-2)).toEqual(['returnsBasis', 'performanceAsOf']);
+    expect(metrics.returnsBasis).toBe('official Eaton Vance / MSIM month-end NAV returns (fund detail page)');
+    expect(metrics.performanceAsOf).toBe('2026-09-30');
+    // official but the table date is unknown -> null, never the Yahoo or NAV date
+    expect(deriveCatalogMetrics(official, derived, null, null, null, null, 26.28).performanceAsOf).toBeNull();
+  });
+
+  test('isoFromEdgar converts the published label back to ISO', () => {
+    expect(isoFromEdgar('Oct 01 2026')).toBe('2026-10-01');
+    expect(isoFromEdgar('—')).toBeNull();
+    expect(isoFromEdgar(undefined)).toBeNull();
   });
 
   test('a fund with no published returns falls back to the derived basis', () => {
@@ -566,6 +592,10 @@ describe('derived metrics', () => {
     expect(metrics.ytd).toBe(7.1);
     expect(metrics.dividendYield).toBeNull();
     expect(metrics.returnsBasis).toContain('not official NAV returns');
+    expect(metrics.performanceAsOf).toBe('2026-09-30');
+    const none = deriveCatalogMetrics({ ytd: null, yr1: null, yr3: null, yr5: null, yr10: null, sinceInception: null }, { asOfDate: '', ytd: null, yr1: null, cagr3y: null, cagr5y: null, cagr10y: null, siAnn: null, mo1: null, qtd: null }, null, null, null, null, null);
+    expect(none.returnsBasis).not.toBe('');
+    expect(none.performanceAsOf).toBeNull();
   });
 
   test('lastCompletedQuarterEnd anchors to the last completed quarter', () => {

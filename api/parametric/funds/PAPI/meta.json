@@ -98,7 +98,9 @@
    "yr5": null,
    "yr10": null,
    "sinceInception": null
-  }
+  },
+  "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)",
+  "performanceAsOf": "2026-10-01"
  },
  "distributions": {
   "frequency": "Monthly",

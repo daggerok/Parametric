@@ -47,6 +47,8 @@ Each fund carries a derived `metrics` object that powers the catalog columns sha
 - `siAnn` - since-inception annualized -> *SI Ann.*
 - `dividendYield` - indicated yield (latest distribution x payments per year / market price), an estimate
 - `secYield` - 30-day SEC yield when the catalog publishes it
+- `returnsBasis` - mandatory non-empty label of how the returns were computed: `official Eaton Vance / MSIM month-end NAV returns (fund detail page)`, `derived from the Yahoo Finance adjusted daily series, not official NAV returns`, or a `mixed: ...` text when official figures are completed with Yahoo-derived estimates for the periods the issuer does not publish
+- `performanceAsOf` - mandatory ISO `YYYY-MM-DD` date the returns are as of: the "As of" date of the issuer's Returns table when the figures are official (not the NAV date), or the last Yahoo close date when they are derived; `null` only when truly unknown. Both fields are the last two keys of `metrics` and are repeated in `returns` of each fund's `meta.json`
 
 Caveats:
 

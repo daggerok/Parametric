@@ -238,6 +238,13 @@ export function formatEdgarDate(iso: string): string {
   return `${MONTHS[Number(month) - 1] ?? month} ${day} ${year}`;
 }
 
+// 'Oct 01 2026' (formatEdgarDate output) -> '2026-10-01'; null when not parseable.
+export function isoFromEdgar(label: unknown): string | null {
+  const match = /^([A-Za-z]{3}) (\d{2}) (\d{4})$/.exec(String(label ?? '').trim());
+  const month = match ? MONTHS.indexOf(match[1]) : -1;
+  return match && month >= 0 ? `${match[3]}-${String(month + 1).padStart(2, '0')}-${match[2]}` : null;
+}
+
 export function epochToIsoDate(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toISOString().slice(0, 10);
 }
@@ -1460,6 +1467,7 @@ export function deriveCatalogMetrics(
   paymentsPerYear: number | null,
   price: number | null,
   officialCumulative: CumulativeReturns | null = null,
+  officialAsOf: string | null = null,
 ): JsonRecord {
   const coalesce = (value: number | null | undefined): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
   const ytd = coalesce(official.ytd) ?? coalesce(derived.ytd);
@@ -1468,6 +1476,20 @@ export function deriveCatalogMetrics(
   const cagr5y = coalesce(official.yr5) ?? coalesce(derived.cagr5y);
   const cagr10y = coalesce(official.yr10) ?? coalesce(derived.cagr10y);
   const siAnn = coalesce(official.sinceInception) ?? coalesce(derived.siAnn);
+  // Which source each published period came from decides the honest label.
+  const periods: Array<[number | null | undefined, number | null | undefined]> = [
+    [official.ytd, derived.ytd], [official.yr1, derived.yr1], [official.yr3, derived.cagr3y],
+    [official.yr5, derived.cagr5y], [official.yr10, derived.cagr10y], [official.sinceInception, derived.siAnn],
+  ];
+  const usedOfficial = periods.some(([o]) => coalesce(o) !== null);
+  const usedDerived = periods.some(([o, d]) => coalesce(o) === null && coalesce(d) !== null);
+  const returnsBasis = usedOfficial && usedDerived
+    ? 'mixed: official Eaton Vance / MSIM month-end NAV returns where the fund detail page publishes them; remaining periods are estimates derived from the Yahoo Finance adjusted daily series, not official NAV returns'
+    : usedOfficial
+      ? 'official Eaton Vance / MSIM month-end NAV returns (fund detail page)'
+      : 'derived from the Yahoo Finance adjusted daily series, not official NAV returns';
+  // Official figures are as of the issuer's returns table; derived ones as of the last Yahoo close.
+  const performanceAsOf = usedOfficial ? (officialAsOf || null) : (derived.asOfDate || null);
   const dividendYield = coalesce(publishedDividendYield) ?? indicatedYield(latestDistribution, paymentsPerYear, price);
   const text = (value: number | null): string | null => (value === null ? null : `${value.toFixed(2)}%`);
   return {
@@ -1484,9 +1506,8 @@ export function deriveCatalogMetrics(
     dividendYieldText: text(dividendYield) ?? '—',
     secYield: coalesce(publishedSecYield),
     secYieldText: text(coalesce(publishedSecYield)) ?? '—',
-    returnsBasis: Object.values(official).some((value) => value !== null)
-      ? 'official Eaton Vance / MSIM month-end NAV returns (fund detail page)'
-      : 'derived from the Yahoo Finance adjusted daily series, not official NAV returns',
+    returnsBasis,
+    performanceAsOf,
   };
 }
 
@@ -1819,6 +1840,17 @@ function labelledDate(lines: string[], label: string): string | null {
   return null;
 }
 
+// "Returns" heading followed by "As of 09/30/2026 (updated daily upon availability)".
+function returnsTableDate(lines: string[]): string | null {
+  for (let index = findLabelLine(lines, 'Returns'); index >= 0; index = findLabelLine(lines, 'Returns', index + 1)) {
+    for (let i = index + 1; i < Math.min(lines.length, index + 4); i++) {
+      const match = /^as of\s+(\d{1,2}\/\d{1,2}\/\d{4})/i.exec(lines[i]);
+      if (match) return toIsoDate(match[1]);
+    }
+  }
+  return null;
+}
+
 export function parseKeyFacts(text: string): Map<string, string> {
   const facts = new Map<string, string>();
   for (const line of sourceLines(text)) {
@@ -2047,6 +2079,9 @@ export function parseIssuerProduct(text: string, ticker: string): ProductData {
   const returns = parseIssuerReturnsTable(text, ticker);
   const dividends = parseIssuerDistributions(text);
   const asOf = labelledDate(lines, 'Market Price');
+  // The returns table carries its own "As of" line under the "Returns" heading;
+  // it is the performance date and is not the NAV/price date.
+  const returnsAsOf = returnsTableDate(lines);
   const heading = source.split('\n').map((line) => line.trim()).find((line) => line.startsWith('# '));
   const fundName = cleanText(heading ? heading.slice(2) : '');
   const benchmark = cleanText(stripFootnotes(facts.get('Benchmarks') || '').split(/<br\s*\/?>/i)[0]);
@@ -2091,8 +2126,8 @@ export function parseIssuerProduct(text: string, ticker: string): ProductData {
       payDate: dividends[dividends.length - 1].payDate,
       recordDate: dividends[dividends.length - 1].recordDate,
     } : null,
-    monthEnd: { ...returns.monthEnd, asOfDate: asOf },
-    quarterEnd: { ...returns.monthEnd, asOfDate: asOf },
+    monthEnd: { ...returns.monthEnd, asOfDate: returnsAsOf },
+    quarterEnd: { ...returns.monthEnd, asOfDate: returnsAsOf },
     dividends,
     holdings: null,
   };
@@ -2390,7 +2425,7 @@ function catalogFundFromIndex(ticker: string, row: JsonRecord): CatalogFund {
       yr10: numberOrNull(monthEnd.yr10),
       sinceInception: numberOrNull(monthEnd.sinceInception),
     },
-    returnsAsOfDate: null,
+    returnsAsOfDate: (/^\d{4}-\d{2}-\d{2}$/.test(String(metrics.performanceAsOf ?? '')) ? String(metrics.performanceAsOf) : null) ?? isoFromEdgar(monthEnd.asOfDate),
     mo1: numberOrNull(monthEnd.mo1),
     quarterEnd: {
       ytd: numberOrNull(quarterEnd.ytd),
@@ -2566,6 +2601,7 @@ async function processFund(
     frequency.paymentsPerYear,
     price,
     officialCumulative,
+    returnsAsOfDate,
   );
 
   const filterReasons = fundFilterReasons({ ticker, aumValue: product?.netAssets ?? holdingsEdgar?.netAssets ?? fund.netAssets, terValue: ter, metrics }, config);
@@ -2676,7 +2712,7 @@ async function processFund(
         ? `30-day SEC yield as published by eatonvance.com${secYieldDate ? `, as of ${formatEdgarDate(secYieldDate)}` : ''}`
         : 'not published by eatonvance.com for this fund',
     },
-    returns: returnsData,
+    returns: returnsData ? { ...returnsData, returnsBasis: metrics.returnsBasis, performanceAsOf: metrics.performanceAsOf } : returnsData,
     distributions: {
       frequency: frequency.frequency,
       paymentsPerYear: frequency.paymentsPerYear,
