@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-10-02T00:04:13Z",
+ "generatedAt": "2026-10-02T01:39:24Z",
  "source": {
   "provider": "Eaton Vance / MSIM product pages (ETF catalog, fund facts, returns and distributions); SEC EDGAR Form N-PORT-P holdings; Yahoo Finance chart API (daily NAV history and dividends)",
   "site": "https://www.eatonvance.com",
@@ -41,7 +41,7 @@
    },
    "returns": {
     "monthEnd": {
-     "asOfDate": "Sep 30 2026",
+     "asOfDate": "Oct 01 2026",
      "mo1": -4.34,
      "mo1Text": "-4.34%",
      "qtd": null,

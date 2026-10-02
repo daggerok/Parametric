@@ -46,7 +46,8 @@
   "display": "—",
   "value": null,
   "asOfDate": "2026-10-01",
-  "source": "previous run"
+  "source": "previous run",
+  "amount": null
  },
  "bidAskSpread": {
   "display": "—",
