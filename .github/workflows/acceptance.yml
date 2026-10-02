@@ -62,6 +62,35 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           rc=0; bun scripts/update-data.ts > /tmp/full2.log 2>&1 || rc=$?; echo "$rc" > /tmp/rc-full2
           find api/parametric -type f | sort | xargs -r sha256sum > /tmp/full-hashes2.txt
+      - name: Diagnose proxy modes for raw SEC XML (temporary)
+        run: |
+          set -uo pipefail
+          URL='https://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml'
+          ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$URL")
+          probe() { # <name> <curl args...>
+            local name="$1"; shift
+            local out
+            out=$(curl -sSL -m 90 "$@" 2>/dev/null | head -c 300)
+            if printf '%s' "$out" | grep -q '<genInfo>'; then
+              echo "[probe] $name: RAW XML OK"
+            else
+              echo "[probe] $name: not raw xml :: $(printf '%s' "$out" | tr '\n' ' ' | head -c 140)"
+            fi
+          }
+          probe "direct-browser-ua" -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36' "$URL"
+          probe "jina-default" "https://r.jina.ai/$URL"
+          probe "jina-return-html" -H 'X-Return-Format: html' "https://r.jina.ai/$URL"
+          probe "jina-return-text" -H 'X-Return-Format: text' "https://r.jina.ai/$URL"
+          probe "jina-respond-html" -H 'X-Respond-With: html' "https://r.jina.ai/$URL"
+          probe "allorigins" "https://api.allorigins.win/raw?url=$ENC"
+          probe "codetabs" "https://api.codetabs.com/v1/proxy?quest=$ENC"
+          probe "corsproxy" "https://corsproxy.io/?$ENC"
+          ATOM='https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=S000082252&type=NPORT-P&count=10&output=atom'
+          ATOM_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$ATOM")
+          out=$(curl -sSL -m 90 "https://r.jina.ai/$ATOM" 2>/dev/null | head -c 300)
+          printf '%s' "$out" | grep -q '<feed' && echo "[probe] atom via jina: RAW OK" || echo "[probe] atom via jina: not raw :: $(printf '%s' "$out" | tr '\n' ' ' | head -c 100)"
+          out=$(curl -sSL -m 90 "https://api.codetabs.com/v1/proxy?quest=$ATOM_ENC" 2>/dev/null | head -c 300)
+          printf '%s' "$out" | grep -q '<feed' && echo "[probe] atom via codetabs: RAW OK" || echo "[probe] atom via codetabs: not raw"
       - name: Publish the evidence
         run: |
           set -euo pipefail
