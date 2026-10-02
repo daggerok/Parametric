@@ -71,12 +71,11 @@ CURRENT STATE
 - Closest sibling pinned for copy/parity (this session):
   * Config/CI/updater reference: `daggerok/Capital-Group` @ `73922c59f6f9a722058b5305e537e8edac25f965`.
   * Shared UI/README baseline reference: `daggerok/Capital-Group` @ `73922c59...` / `daggerok/JPMorgan` @ `8ce0ddca58b5459dd7df98f22463fb31afa82f2b`.
-- Remaining work (in order):
-  1. Delete the two temporary workflows before the PR: `.github/workflows/acceptance.yml` and `.github/workflows/probe2.yml` (plus `evidence/live/probe.txt` if it should not ship — it is temporary probe evidence, delete it too). The `TEMP probe` workflow entry (id 372641868) was already removed from the branch.
-  2. Repository metadata (description per the shared pattern, homepage `https://daggerok.github.io/Parametric/`, topics + `parametric`/`parametric-etfs`): the fine-grained session token can push and open PRs but returns HTTP 403 `Resource not accessible by integration` on `PATCH /repos/daggerok/Parametric`, so these fields remain null/empty unless a token with administration scope is used.
-  3. Open the PR from `arena/01a0f9b5-parametric` into `main` (no merge) and report back: which closest sibling was used per concern, the MSIM/Eaton Vance role-selection-cookie JSON endpoint question, and the provider limitations observed live.
-- Blockers: none for the code; only the repo-metadata fields need a token with administration scope (or a manual edit).
-- Exact next action: delete the temporary workflows in a scoped commit, push, then open the PR and write the final report.
+- Pull request: https://github.com/daggerok/Parametric/pull/1 (`feat: Parametric ETF holdings-to-watchlist app with the live-updated static feed`) — OPEN, base `main`, head `arena/01a0f9b5-parametric`, mergeable; the `Offline checks` workflow ran on the PR and passed. Merging is explicitly not authorized and is left to the user.
+- Done before the PR: both temporary workflows deleted in `da648f6` (`.github/workflows/acceptance.yml`, `.github/workflows/probe2.yml`, plus the temporary `evidence/live/probe.txt`); the shipped workflow suite is `update-data.yml`, `checks.yml`, `pages.yml` and `dependabot.yml`.
+- Remaining, not blocking the PR: repository metadata (description per the shared pattern, homepage `https://daggerok.github.io/Parametric/`, topics + `parametric`/`parametric-etfs`). The session token can push and open PRs but `PATCH /repos/daggerok/Parametric` returns HTTP 403 `Resource not accessible by integration`, so these fields are still empty and need a token with administration scope or a manual edit. Sources stay honest: the eatonvance.com edge answers 403 to CI runners, so TER/premium-discount/30-day SEC yield are null in the published feed until a run reaches the issuer.
+- Blockers: none; only the repository-metadata fields need elevated scope.
+- Exact next action: none in-progress. If work continues, apply the repository metadata with an administration-scoped token and re-run the acceptance workflow (recreate it from `da648f6^:.github/workflows/acceptance.yml`) after any updater change.
 
 AUTHORITY / USER AMENDMENTS
 ==========================
