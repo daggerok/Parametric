@@ -1,0 +1,68 @@
+# TEMPORARY transport probe — deleted before the pull request.
+#
+# The acceptance workflow's step logs cannot be read from the implementation
+# sandbox, so this tiny workflow tests which transport returns the raw SEC XML
+# and commits its findings to evidence/live/probe.txt.
+name: TEMP transport probe (delete before PR)
+
+on:
+  push:
+    branches: [arena/01a0f9b5-parametric]
+    paths: [.github/workflows/probe2.yml]
+  workflow_dispatch:
+
+permissions: { contents: write }
+concurrency: { group: probe2-parametric, cancel-in-progress: true }
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: true
+      - name: Probe transports for raw SEC XML
+        run: |
+          set -uo pipefail
+          OUT=evidence/live/probe.txt
+          mkdir -p evidence/live
+          {
+            echo "transport probe — $(date -u +%Y-%m-%dT%H:%M:%SZ) run $GITHUB_RUN_ID"
+            URL='https://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml'
+            ATOM='https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=S000082252&type=NPORT-P&count=10&output=atom'
+            probe() { # <name> <marker> <url> [curl args...]
+              local name="$1" marker="$2" url="$3"; shift 3
+              local out=''
+              out=$(curl -sSL -m 90 "$@" "$url" 2>/dev/null | head -c 300 || true)
+              if printf '%s' "${out:-}" | grep -q "$marker"; then
+                echo "  [RAW]  $name"
+              else
+                echo "  [markdown/other] $name :: $(printf '%s' "${out:-}" | tr '\n' ' ' | head -c 120)"
+              fi
+              return 0
+            }
+            echo "== N-PORT primary_doc.xml (looking for <genInfo>) =="
+            probe "jina-default" '<genInfo>' "https://r.jina.ai/$URL" || true
+            probe "jina-browser-accept" '<genInfo>' "https://r.jina.ai/$URL" -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36' -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' || true
+            probe "jina-accept-xml-only" '<genInfo>' "https://r.jina.ai/$URL" -H 'Accept: application/xml' || true
+            probe "jina-accept-json" '<genInfo>' "https://r.jina.ai/$URL" -H 'Accept: application/json,*/*' || true
+            probe "jina-return-html" '<genInfo>' "https://r.jina.ai/$URL" -H 'X-Return-Format: html' || true
+            probe "jina-return-text" '<genInfo>' "https://r.jina.ai/$URL" -H 'X-Return-Format: text' || true
+            probe "jina-respond-html" '<genInfo>' "https://r.jina.ai/$URL" -H 'X-Respond-With: html' || true
+            probe "jina-http-scheme" '<genInfo>' "https://r.jina.ai/http://www.sec.gov/Archives/edgar/data/1676326/000207169126018753/primary_doc.xml" || true
+            probe "direct-browser-ua" '<genInfo>' "$URL" -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0 Safari/537.36' || true
+            echo "== browse-edgar Atom feed (looking for <feed) =="
+            probe "jina-default" '<feed' "https://r.jina.ai/$ATOM" || true
+            probe "jina-return-html" '<feed' "https://r.jina.ai/$ATOM" -H 'X-Return-Format: html' || true
+            probe "jina-accept-xml-only" '<feed' "https://r.jina.ai/$ATOM" -H 'Accept: application/xml' || true
+          } >> "$OUT"
+          cat "$OUT"
+      - name: Commit the probe result
+        run: |
+          set -euo pipefail
+          git add evidence/live/probe.txt
+          git diff --cached --quiet && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(probe): record the SEC XML transport probe [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
