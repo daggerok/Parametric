@@ -705,10 +705,14 @@ export type CatalogFund = {
   cusip: string;
   isin: string;
   benchmark: string;
+  secYieldDate?: string | null;
+  frequencyCode?: string;
+  frequency?: string;
+  premiumDiscountAmount?: number | null;
   ter: number | null;
   nav: number | null;
   close: number | null;
-  premiumDiscount: number | null;
+  premiumDiscountAmount: number | null;
   netAssets: number | null;
   dividendYield: number | null;
   secYield: number | null;
@@ -787,7 +791,7 @@ export type ProductData = {
   navDate: string | null;
   marketPrice: number | null;
   marketPriceDate: string | null;
-  premiumDiscount: number | null;
+  premiumDiscountAmount: number | null;
   netAssets: number | null;
   netAssetsDate: string | null;
   bidAskSpread: number | null;
@@ -1637,11 +1641,42 @@ export const PARAMETRIC_FUND_SLUGS: Record<string, string> = {
 
 // The catalog table renders one row per fund as:
 //   | PAPI<br> [Parametric Equity Premium Income ETF](https://www.eatonvance.com/.../parametric-...-etf.html) | 09/30/2026 | 26.28 | ...
-export function parseIssuerCatalog(text: string): Array<{ ticker: string; name: string; fundPage: string }> {
+export type CatalogEntry = {
+  ticker: string;
+  name: string;
+  fundPage: string;
+  nav: number | null;
+  marketPrice: number | null;
+  asOfDate: string | null;
+  secYield: number | null;
+  secYieldDate: string | null;
+  frequency: string;
+};
+
+export function parseIssuerCatalog(text: string): CatalogEntry[] {
   const source = normalizeSource(text);
-  const funds = new Map<string, { ticker: string; name: string; fundPage: string }>();
-  const rowRe = /^\|\s*([A-Z0-9]{2,6})\s*(?:<br\s*\/?>)?\s*\[([^\]]+)\]\(([^)\s]+)\)/gim;
-  for (const match of source.matchAll(rowRe)) {
+  const funds = new Map<string, CatalogEntry>();
+  const rowRe = /^\|\s*([A-Z0-9]{2,6})\s*(?:<br\s*\/?>)?\s*\[([^\]]+)\]\(([^)\s]+)\)\s*\|([^\n]*)$/gim;
+  let header: { nav: number; market: number; asOf: number; yieldDate: number; secYield: number; frequency: number } | null = null;
+  for (const line of source.split('\n')) {
+    if (!line.startsWith('|') || isSeparatorRow(line)) continue;
+    const cells = tableCells(line);
+    // Header cells wrap over several lines ("Market <br>Price ($)"); the line
+    // break is spacing, not part of the column name.
+    const labels = cells.map((cell) => cell.replace(/<br\s*\/?>/gi, ' ').replace(/\s+/g, ' ').trim().toLowerCase());
+    if (!header && labels.some((label) => /nav \(\$\)/.test(label)) && labels.some((label) => /30-day/.test(label))) {
+      header = {
+        nav: labels.findIndex((label) => /^nav \(\$\)/.test(label)),
+        market: labels.findIndex((label) => /^market\s*price \(\$\)/.test(label)),
+        asOf: labels.findIndex((label) => /as of date/.test(label)),
+        yieldDate: labels.findIndex((label) => /^yield/.test(label) && /as of/.test(label)),
+        secYield: labels.findIndex((label) => /30-day/.test(label) && /yield/.test(label)),
+        frequency: labels.findIndex((label) => /^dist/.test(label)),
+      };
+    }
+    const match = rowRe.exec(line);
+    rowRe.lastIndex = 0;
+    if (!match) continue;
     const ticker = sanitizeTicker(match[1]);
     if (!ticker) continue;
     let fundPage = match[3];
@@ -1652,7 +1687,25 @@ export function parseIssuerCatalog(text: string): Array<{ ticker: string; name: 
       continue;
     }
     if (!isParametricFundUrl(fundPage)) continue;
-    if (!funds.has(ticker)) funds.set(ticker, { ticker, name: cleanText(match[2]), fundPage });
+    // The cells after the fund link are the row's own figures; the header row
+    // (parsed above) supplies their positions.
+    const figures = tableCells(`| ${match[4]}`);
+    // `figures` starts after the fund-name cell, while the header indices are
+    // absolute, so the fund-name column (0) is skipped.
+    const at = (index: number): string => (index >= 1 && index - 1 < figures.length ? figures[index - 1] : '');
+    if (!funds.has(ticker)) {
+      funds.set(ticker, {
+        ticker,
+        name: cleanText(match[2]),
+        fundPage,
+        nav: header ? numberOrNull(at(header.nav)) : null,
+        marketPrice: header ? numberOrNull(at(header.market)) : null,
+        asOfDate: header ? toIsoDate(at(header.asOf)) : null,
+        secYield: header ? numberOrNull(at(header.secYield)) : null,
+        secYieldDate: header ? toIsoDate(at(header.yieldDate)) : null,
+        frequency: header ? cleanText(at(header.frequency)) : '',
+      });
+    }
   }
   const list = [...funds.values()].sort((a, b) => a.ticker.localeCompare(b.ticker));
   if (!list.length) throw new Error('catalog: no Parametric fund links found');
@@ -1662,7 +1715,8 @@ export function parseIssuerCatalog(text: string): Array<{ ticker: string; name: 
 // Labels carry markdown footnote links ("Expense Ratio [1](https://...#x)") and
 // optional trailing colons; the value lines never do.
 export function labelKey(line: string): string {
-  return cleanText(stripFootnotes(line)).replace(/[:\s]+$/, '').trim().toLowerCase();
+  return cleanText(stripFootnotes(String(line ?? '').replace(/<br\s*\/?>/gi, ' ')))
+    .replace(/[:\s]+$/, '').trim().toLowerCase();
 }
 
 // Footnote markers ([1], [2] plus their markdown link target) are decoration,
@@ -1962,7 +2016,7 @@ export function parseIssuerProduct(text: string, ticker: string): ProductData {
     navDate: asOf,
     marketPrice: numberOrNull(labelledValue(lines, 'Market Price')),
     marketPriceDate: asOf,
-    premiumDiscount: numberOrNull(labelledValue(lines, 'Premium/Discount')),
+    premiumDiscountAmount: numberOrNull(labelledValue(lines, 'Premium/Discount')),
     netAssets: aumMillions === null ? null : round(aumMillions * 1e6, 0),
     netAssetsDate: parseKeyFactDates(text).get('Total Net Assets ($MM)') ?? null,
     bidAskSpread: numberOrNull(labelledValue(lines, 'Bid/Ask Spread')),
@@ -2273,6 +2327,9 @@ function catalogFundFromIndex(ticker: string, row: JsonRecord): CatalogFund {
     fundPage: PARAMETRIC_FUND_SLUGS[ticker] ? issuerFundUrl(ticker) : String(row.fundPage ?? ISSUER_CATALOG),
     trustCik: null,
     source: 'previous index',
+    secYieldDate: null,
+    frequencyCode: '',
+    premiumDiscountAmount: null,
   };
 }
 
@@ -2384,7 +2441,12 @@ async function processFund(
     ? product.dividends.map((payment) => ({ epoch: payment.epoch, amount: payment.amount }))
     : (yahooDividends.length ? yahooDividends : priorDividends);
   const latestDividend = dividends.length ? dividends[dividends.length - 1] : null;
-  const decodedFrequency = product?.frequencyCode ? DIVIDEND_FREQUENCY_CODES[product.frequencyCode] ?? null : null;
+  const catalogFrequency = issuerFrequency(fund.frequency);
+  const decodedFrequency = product?.frequencyCode
+    ? DIVIDEND_FREQUENCY_CODES[product.frequencyCode] ?? null
+    : catalogFrequency.paymentsPerYear !== null
+      ? catalogFrequency
+      : null;
   const inferredFrequency = dividends.length >= 2 ? inferDistributionFrequency(dividends) : null;
   const frequency =
     decodedFrequency && decodedFrequency.paymentsPerYear !== null
@@ -2405,11 +2467,13 @@ async function processFund(
   const ter = product?.netExpense ?? product?.grossExpense ?? fund.ter ?? numberOrNull(previous.terValue);
   const nav = product?.nav ?? fund.nav ?? numberOrNull(previous.navValue);
   const price = product?.marketPrice ?? fund.close ?? chart?.regularMarketPrice ?? numberOrNull(previous.closePriceValue);
+  const secYield = product?.secYield ?? fund.secYield ?? null;
+  const secYieldDate = product?.secYieldDate ?? fund.secYieldDate ?? null;
   const metrics = deriveCatalogMetrics(
     official,
     derived,
     product?.dividendYield ?? fund.dividendYield,
-    product?.secYield ?? fund.secYield,
+    secYield,
     latestDividend ? latestDividend.amount : null,
     frequency.paymentsPerYear,
     price,
@@ -2426,7 +2490,11 @@ async function processFund(
   // Without a fresh issuer catalog the N-PORT-P series name is the most
   // authoritative fund name available.
   const name = product?.name || holdingsEdgar?.seriesName || fund.name || String(previous.name ?? '') || ticker;
-  const premiumDiscount = product?.premiumDiscount ?? fund.premiumDiscount ?? (nav && price ? round(((price - nav) / nav) * 100, 2) : null);
+  // The product page publishes the premium/discount in dollars; the sibling
+  // feeds publish a percentage, so it is computed from the page's own NAV and
+  // market price (and the published dollar figure is kept alongside).
+  const premiumDiscountAmount = product?.premiumDiscountAmount ?? fund.premiumDiscountAmount ?? null;
+  const premiumDiscount = nav && price ? round(((price - nav) / nav) * 100, 2) : fund.premiumDiscount ?? null;
   const nportNetAssets = holdingsEdgar
     ? holdingsEdgar.netAssets ?? (holdingsEdgar.totalValue ? round(holdingsEdgar.totalValue, 2) : null)
     : null;
@@ -2485,7 +2553,8 @@ async function processFund(
       display: premiumDiscount === null ? '—' : `${premiumDiscount.toFixed(2)}%`,
       value: premiumDiscount,
       asOfDate: navAsOfDate,
-      source: product ? 'official Eaton Vance / MSIM product page (premium/discount)' : 'previous run',
+      source: product ? 'official Eaton Vance / MSIM product page (market price versus NAV)' : 'previous run',
+      amount: premiumDiscountAmount,
     },
     bidAskSpread: {
       display: product?.bidAskSpread === null || product?.bidAskSpread === undefined ? '—' : `${product.bidAskSpread.toFixed(2)}%`,
@@ -2516,7 +2585,7 @@ async function processFund(
       secYield: metrics.secYield,
       secYieldText: metrics.secYieldText,
       secYieldKind: metrics.secYield !== null
-        ? '30-day SEC yield as published by eatonvance.com'
+        ? `30-day SEC yield as published by eatonvance.com${secYieldDate ? `, as of ${formatEdgarDate(secYieldDate)}` : ''}`
         : 'not published by eatonvance.com for this fund',
     },
     returns: returnsData,
@@ -2657,6 +2726,12 @@ async function main(): Promise<void> {
         fund.name = entry.name || fund.name;
         fund.fundPage = entry.fundPage;
         fund.source = 'parametric';
+        fund.nav ??= entry.nav;
+        fund.close ??= entry.marketPrice;
+        fund.secYield ??= entry.secYield;
+        fund.secYieldDate = entry.secYieldDate;
+        fund.asOfDate ??= entry.asOfDate;
+        fund.frequency = entry.frequency;
         catalog.set(entry.ticker, fund);
       }
       catalogSource = 'Eaton Vance / MSIM official ETF catalog';

@@ -47,6 +47,17 @@ describe('parseIssuerCatalog', () => {
     // Non-Parametric rows of the same shared catalog must never leak in.
     expect(funds.map((fund) => fund.ticker)).not.toContain('CVIE');
     expect(funds.map((fund) => fund.ticker)).not.toContain('EVTR');
+    // The same table publishes the daily NAV/market price and the 30-day SEC
+    // yield with its own as-of date; those columns are mapped by header name.
+    const premium = funds.find((fund) => fund.ticker === 'PAPI')!;
+    expect(premium.nav).toBe(26.22);
+    expect(premium.marketPrice).toBe(26.28);
+    expect(premium.asOfDate).toBe('2026-09-30');
+    expect(premium.secYield).toBe(2.63);
+    expect(premium.secYieldDate).toBe('2026-08-31');
+    expect(premium.frequency).toBe('Monthly');
+    expect(funds.find((fund) => fund.ticker === 'PEPS')!.secYield).toBe(0.97);
+    expect(funds.find((fund) => fund.ticker === 'PHEQ')!.secYield).toBe(0.81);
   });
 
   test('a catalog without Parametric rows is an error, not an empty catalog', () => {
@@ -80,7 +91,10 @@ describe('parseIssuerProduct (live page fixtures)', () => {
     expect(product.nav).toBe(26.22);
     expect(product.marketPrice).toBe(26.28);
     expect(product.navDate).toBe('2026-09-30');
-    expect(product.premiumDiscount).toBe(0.06);
+    // The page publishes the premium in dollars ("$0.06"); the feed's
+    // percentage is computed from the page's own market price and NAV.
+    expect(product.premiumDiscountAmount).toBe(0.06);
+    expect(Math.round(((product.marketPrice! - product.nav!) / product.nav!) * 100 * 100) / 100).toBe(0.23);
     expect(product.bidAskSpread).toBe(0.22);
     expect(product.grossExpense).toBe(0.29);
     expect(product.netExpense).toBe(0.29);
@@ -100,7 +114,7 @@ describe('parseIssuerProduct (live page fixtures)', () => {
     expect(hedged.cusip).toBe('61774R874');
     expect(hedged.nav).toBe(35.2);
     expect(hedged.marketPrice).toBe(35.4);
-    expect(hedged.premiumDiscount).toBe(0.2);
+    expect(hedged.premiumDiscountAmount).toBe(0.2);
     expect(hedged.netAssets).toBe(153_100_000);
     expect(hedged.frequencyCode).toBe('Q');
     expect(hedged.benchmark).toBe('S&P 500 Index');
@@ -589,7 +603,15 @@ describe('published api/parametric feed', () => {
       expect(meta.history.pages.length ? JSON.parse(readFileSync(new URL(`../api/parametric/funds/${fund.ticker}/history/001.json`, import.meta.url), 'utf8')).headers : []).toEqual(YAHOO_HISTORY_HEADERS);
       expect(Array.isArray(meta.distributions.rows)).toBe(true);
       expect(meta.ticker).toBe(fund.ticker);
-      expect(meta.identifiers.cusip).toMatch(/^[A-Z0-9]{9}$/);
+      expect(meta.name).toBe(fund.name);
+      expect(meta.history.totalRows).toBeGreaterThan(0);
+      // Identifiers, TER/AUM, the 30-day SEC yield and the premium/discount are
+      // published only when the eatonvance.com edge answered during the
+      // generation run; when it did not, the feed keeps an explicit null
+      // instead of inventing a value, and the two files must agree either way.
+      const cusip = fund.identifiers?.cusip ?? null;
+      expect(meta.identifiers.cusip).toBe(cusip);
+      if (cusip !== null) expect(cusip).toMatch(/^[A-Z0-9]{9}$/);
     }
   });
 });
