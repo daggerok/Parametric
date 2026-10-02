@@ -2,19 +2,19 @@
  "ticker": "PEPS",
  "name": "Parametric Equity Plus ETF",
  "category": "US Equity",
- "categoryPath": "US Equity",
+ "categoryPath": "US Equity / S&P 500 Index",
  "source": {
   "fundPage": "https://www.eatonvance.com/products/etfs/us-equity/parametric-equity-plus-etf.html",
   "catalog": "https://www.eatonvance.com/products/etfs.html",
   "yahooChart": "https://query1.finance.yahoo.com/v8/finance/chart/PEPS",
-  "holdingsSource": "previous run",
+  "holdingsSource": "SEC EDGAR Form N-PORT-P (accession 0002071691-26-018752, report period 2026-06-30)",
   "historySource": "Yahoo Finance public chart API (adjusted close)",
   "provider": "Eaton Vance / MSIM product pages + SEC EDGAR Form N-PORT-P (holdings) + Yahoo Finance public chart API (NAV history and dividends)"
  },
  "identifiers": {
   "cusip": null,
   "isin": null,
-  "indexTicker": null
+  "indexTicker": "S&P 500 Index"
  },
  "inception": {
   "fundInceptionDate": null,
@@ -56,10 +56,10 @@
   "source": "official Eaton Vance / MSIM product page (30-day median bid/ask spread)"
  },
  "aum": {
-  "display": "—",
-  "value": null,
-  "asOfDate": "—",
-  "source": "previous run"
+  "display": "$28.89 M",
+  "value": 28890773.18,
+  "asOfDate": "Jun 30 2026",
+  "source": "SEC Form N-PORT-P net assets (report period 2026-06-30)"
  },
  "yields": {
   "dividendYield": 1.03,
@@ -136,12 +136,14 @@
   ]
  },
  "holdings": {
-  "pages": [],
+  "pages": [
+   "holdings/001.json"
+  ],
   "pageSize": 250,
-  "totalRows": 0,
-  "asOfDate": null,
-  "asOf": "—",
-  "source": "previous run"
+  "totalRows": 192,
+  "asOfDate": "2026-06-30",
+  "asOf": "Jun 30 2026",
+  "source": "SEC EDGAR Form N-PORT-P (accession 0002071691-26-018752, report period 2026-06-30)"
  },
  "history": {
   "pages": [

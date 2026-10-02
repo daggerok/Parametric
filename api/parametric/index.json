@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-10-02T01:39:24Z",
+ "generatedAt": "2026-10-02T02:10:10Z",
  "source": {
   "provider": "Eaton Vance / MSIM product pages (ETF catalog, fund facts, returns and distributions); SEC EDGAR Form N-PORT-P holdings; Yahoo Finance chart API (daily NAV history and dividends)",
   "site": "https://www.eatonvance.com",
@@ -8,7 +8,7 @@
  },
  "counts": {
   "funds": 3,
-  "holdings": 0,
+  "holdings": 572,
   "history": 1844
  },
  "funds": [
@@ -16,7 +16,7 @@
    "ticker": "PAPI",
    "name": "Parametric Equity Premium Income ETF",
    "category": "US Equity",
-   "categoryPath": "US Equity",
+   "categoryPath": "US Equity / Russell 1000 Value",
    "fundPage": "https://www.eatonvance.com/products/etfs/us-equity/parametric-equity-premium-income-etf.html",
    "dataFile": "./funds/PAPI/meta.json",
    "cusip": null,
@@ -26,8 +26,8 @@
    "terValue": null,
    "nav": "—",
    "navValue": null,
-   "aum": "—",
-   "aumValue": null,
+   "aum": "$399.84 M",
+   "aumValue": 399844102.98,
    "asOfDate": "Oct 01 2026",
    "inceptionDate": "—",
    "closePrice": "$26.48",
@@ -77,14 +77,14 @@
     "secYieldText": "—",
     "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)"
    },
-   "holdings": 0,
+   "holdings": 194,
    "history": 740
   },
   {
    "ticker": "PEPS",
    "name": "Parametric Equity Plus ETF",
    "category": "US Equity",
-   "categoryPath": "US Equity",
+   "categoryPath": "US Equity / S&P 500 Index",
    "fundPage": "https://www.eatonvance.com/products/etfs/us-equity/parametric-equity-plus-etf.html",
    "dataFile": "./funds/PEPS/meta.json",
    "cusip": null,
@@ -94,8 +94,8 @@
    "terValue": null,
    "nav": "—",
    "navValue": null,
-   "aum": "—",
-   "aumValue": null,
+   "aum": "$28.89 M",
+   "aumValue": 28890773.18,
    "asOfDate": "Oct 01 2026",
    "inceptionDate": "—",
    "closePrice": "$32.94",
@@ -145,14 +145,14 @@
     "secYieldText": "—",
     "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)"
    },
-   "holdings": 0,
+   "holdings": 192,
    "history": 364
   },
   {
    "ticker": "PHEQ",
    "name": "Parametric Hedged Equity ETF",
    "category": "US Equity",
-   "categoryPath": "US Equity",
+   "categoryPath": "US Equity / S&P 500 Index",
    "fundPage": "https://www.eatonvance.com/products/etfs/us-equity/parametric-hedged-equity-etf.html",
    "dataFile": "./funds/PHEQ/meta.json",
    "cusip": null,
@@ -162,8 +162,8 @@
    "terValue": null,
    "nav": "—",
    "navValue": null,
-   "aum": "—",
-   "aumValue": null,
+   "aum": "$139.96 M",
+   "aumValue": 139956788.17,
    "asOfDate": "Oct 01 2026",
    "inceptionDate": "—",
    "closePrice": "$35.36",
@@ -213,7 +213,7 @@
     "secYieldText": "—",
     "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)"
    },
-   "holdings": 0,
+   "holdings": 186,
    "history": 740
   }
  ]

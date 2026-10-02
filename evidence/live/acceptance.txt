@@ -360,3 +360,58 @@ published counts: {'funds': 3, 'holdings': 0, 'history': 1844}
 [ edgar    ] fund ticker table: HTTP 403 (attempt 1 of 1) — switching to the read-only rendering proxy for the rest of this run
 [ issuer   ] [ catalog  ]: : HTTP 403 (attempt 1 of 1) — switching to the read-only rendering proxy for the rest of this run
 -- provider warnings / fallbacks (full) --
+Parametric live acceptance — 2026-10-02T02:16:59Z
+run: 36954217057 commit: 1cf2c38591d49f27e2cebeb2a45f3f154c05717c runner: GitHub Actions 1000008775 bun: 1.4.2
+
+== isolated scoped runs: TICKERS="PAPI PHEQ PEPS" VERBOSE=1 bun scripts/update-data.ts ==
+exit codes: run1=0 run2=0
+byte-stable: yes (ignoring generatedAt: yes)
+config: [ config ] Parametric updater: MAX_FETCHES=0 REQUEST_SLEEP=3 CONCURRENCY=1 AUM=: CATALOG_URL=https://www.eatonvance.com/products/etfs.html DIVIDEND_YIELD=: EDGAR_FALLBACK=true HISTORY_PAGE_SIZE=1000 HISTORY_RANGE=max HOLDINGS_PAGE_SIZE=250 MAX_RETRIES=2 PERFORMANCE_10Y=: PERFORMANCE_1Y=: PERFORMANCE_3Y=: PERFORMANCE_5Y=: PERFORMANCE_YTD=: SEC_UA=daggerok Parametric ETF feed (https://github.com/daggerok/Parametric) SEC_YIELD=: SKIP_ISSUER=false SKIP_YAHOO=false STORE_RAW_DOWNLOADS=false TER=: TICKERS=PAPI,PHEQ,PEPS TOTAL_RETURN_10Y=: TOTAL_RETURN_1Y=: TOTAL_RETURN_3Y=: TOTAL_RETURN_5Y=: TOTAL_RETURN_YTD=: VERBOSE=true 
+files: 10 json files
+hashes (run 1 == run 2):
+9ee278577d4e655067e97d540425613655ec527f3aaeefb29f555d2dd3d43236  api/parametric/funds/PAPI/history/001.json
+4e44f6bc69cb3d0e1bdb07be5698b51162397b1b821a4f430a656860b26b670a  api/parametric/funds/PAPI/holdings/001.json
+f51e60f6e89ac635f022f431fdab09b7d901274af6c4ff45096fb19b5bc5a3e4  api/parametric/funds/PAPI/meta.json
+de12ec6f20ea09b313f4730b87a49c9aefc0155efd103a6933ef61e396a829a5  api/parametric/funds/PEPS/history/001.json
+3b1bc02e9c59e90182e692239ce1eec0e0a90127c4e0396be597b37ccd95091c  api/parametric/funds/PEPS/holdings/001.json
+850de2b3a2a9bf4f08fa47b43fc79dadc2d59b793ca19d286dbd1ed57bd9cb02  api/parametric/funds/PEPS/meta.json
+bc60feb97a721056870334cda42103a50c1ab1daa2c9b5d3ed29efe5c7c5784c  api/parametric/funds/PHEQ/history/001.json
+48e58c28a36c4d52aace9f8bd4f44e6083b7a2529c38f62b846b68dd5392d27c  api/parametric/funds/PHEQ/holdings/001.json
+37733de8ef82f113005dd18e11256aec8854b7d2171df91ea744b90441ce7c1d  api/parametric/funds/PHEQ/meta.json
+ac9e7321bc69fa6583d68ee89510ab2917035a509c0b0f89bf46fe5c8fad04bc  api/parametric/index.json
+-- fund reporter lines --
+[  1/3   ] PAPI  unchanged history=740 holdings=194 divs=35 netAssets=$399.8M
+[  2/3   ] PEPS  unchanged history=364 holdings=192 divs=6 netAssets=$28.9M
+[  3/3   ] PHEQ  unchanged history=740 holdings=186 divs=12 netAssets=$140.0M
+-- provider provenance (isolated run) --
+[ catalog  ] (proxy): HTTP 403 (attempt 3 of 3) — retained published catalog
+[ catalog  ] 3 Parametric ETFs (previous published index)
+[ edgar    ] SEC company ticker table: 13794 issuer names
+[ edgar    ] SEC fund ticker table: 28579 ETF / mutual-fund share classes
+[ edgar    ] fund ticker table: HTTP 403 (attempt 1 of 1) — switching to the read-only rendering proxy for the rest of this run
+[ issuer   ] [ catalog  ]: : HTTP 403 (attempt 1 of 1) — switching to the read-only rendering proxy for the rest of this run
+-- provider warnings / fallbacks --
+
+== full generation: bun scripts/update-data.ts (published api/parametric seed) ==
+exit codes: pass1=0 pass2=0
+byte-stable pass1->pass2: yes (ignoring generatedAt: yes)
+config: [ config ] Parametric updater: MAX_FETCHES=0 REQUEST_SLEEP=3 CONCURRENCY=1 AUM=: CATALOG_URL=https://www.eatonvance.com/products/etfs.html DIVIDEND_YIELD=: EDGAR_FALLBACK=true HISTORY_PAGE_SIZE=1000 HISTORY_RANGE=max HOLDINGS_PAGE_SIZE=250 MAX_RETRIES=2 PERFORMANCE_10Y=: PERFORMANCE_1Y=: PERFORMANCE_3Y=: PERFORMANCE_5Y=: PERFORMANCE_YTD=: SEC_UA=daggerok Parametric ETF feed (https://github.com/daggerok/Parametric) SEC_YIELD=: SKIP_ISSUER=false SKIP_YAHOO=false STORE_RAW_DOWNLOADS=false TER=: TICKERS=all TOTAL_RETURN_10Y=: TOTAL_RETURN_1Y=: TOTAL_RETURN_3Y=: TOTAL_RETURN_5Y=: TOTAL_RETURN_YTD=: VERBOSE=false 
+[ catalog  ] (proxy): HTTP 403 (attempt 3 of 3) — retained published catalog
+[ catalog  ] 3 Parametric ETFs (previous published index)
+[ filter   ] 3 of 3 funds pass filters
+[ done     ] 3 funds updated, 0 kept from previous runs, 0 failures
+[ done     ] counts: 3 funds / 572 holdings rows / 1,844 history rows
+published counts: {'funds': 3, 'holdings': 572, 'history': 1844}
+  PAPI holdings=194 history=740 ter=None aum=399844102.98 divs=Monthly
+  PEPS holdings=192 history=364 ter=None aum=28890773.18 divs=Quarterly
+  PHEQ holdings=186 history=740 ter=None aum=139956788.17 divs=Quarterly
+-- fund reporter lines (full) --
+[  1/3   ] PAPI  updated   history=740 holdings=194 divs=35 netAssets=$399.8M
+[  2/3   ] PEPS  updated   history=364 holdings=192 divs=6 netAssets=$28.9M
+[  3/3   ] PHEQ  updated   history=740 holdings=186 divs=12 netAssets=$140.0M
+-- provider provenance (full run) --
+[ catalog  ] (proxy): HTTP 403 (attempt 3 of 3) — retained published catalog
+[ catalog  ] 3 Parametric ETFs (previous published index)
+[ edgar    ] fund ticker table: HTTP 403 (attempt 1 of 1) — switching to the read-only rendering proxy for the rest of this run
+[ issuer   ] [ catalog  ]: : HTTP 403 (attempt 1 of 1) — switching to the read-only rendering proxy for the rest of this run
+-- provider warnings / fallbacks (full) --
