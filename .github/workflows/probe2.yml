@@ -66,3 +66,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore(probe): record the SEC XML transport probe [skip ci]"
           git push origin "HEAD:${GITHUB_REF_NAME}"
+
+# (probe trigger)
