@@ -75,7 +75,8 @@
     "dividendYieldText": "8.02%",
     "secYield": null,
     "secYieldText": "—",
-    "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)"
+    "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)",
+    "performanceAsOf": "2026-10-01"
    },
    "holdings": 194,
    "history": 740
@@ -143,7 +144,8 @@
     "dividendYieldText": "1.03%",
     "secYield": null,
     "secYieldText": "—",
-    "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)"
+    "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)",
+    "performanceAsOf": "2026-10-01"
    },
    "holdings": 192,
    "history": 364
@@ -211,7 +213,8 @@
     "dividendYieldText": "0.55%",
     "secYield": null,
     "secYieldText": "—",
-    "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)"
+    "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)",
+    "performanceAsOf": "2026-10-01"
    },
    "holdings": 186,
    "history": 740
