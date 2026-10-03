@@ -11,7 +11,7 @@ import {
   parseCompanyTickerMap, parseEdgarAtomFilings, parseFundTickerMap, parseHoldingsCsv, parseIssuerCatalog,
   parseIssuerDistributions, parseIssuerProduct, parseIssuerReturnsTable, parseKeyFacts, parseNport,
   parseNportAccessions, parseRange, parseTopHoldings, pickEftsCik, proxyPayload, readConfig, resolveControls,
-  installSystemCa, isCertError, runPool, runtimeControls, configureProxyGate, totalToAnnualized, withRequestLane, PARAMETRIC_FUND_SLUGS,
+  installSystemCa, isCertError, runPool, parseIssuerApi, loadIssuerApi, issuerGate, officialReturnsFor, cursorScope, issuerApiUrl, priceReturns, runtimeControls, configureProxyGate, totalToAnnualized, withRequestLane, PARAMETRIC_FUND_SLUGS,
 } from './update-data';
 
 const ROOT = new URL('../', import.meta.url);
@@ -1059,5 +1059,142 @@ describe('README', () => {
       expect(rows.length).toBeGreaterThanOrEqual(29);
       expect(rows.filter((row) => row.includes('/Parametric'))).toHaveLength(1);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issuer JSON data service (the product pages are rendered client side from it)
+// ---------------------------------------------------------------------------
+
+const API_PERF = (timeFrame: string, asOf: string, o: Record<string, string>) => ({
+  timeFrame, perfAsOfDate: asOf, perfType: 'NET', ...o,
+});
+const API_FILES = {
+  detail: { en: { name: 'Parametric Equity Premium Income ETF', inceptionDate: '10-16-2023', exchange: 'NYSE Arca', assetClassName: 'US Equity', distFrequency: 'Monthly', shareClasses: [{
+    identifiers: { ticker: 'PAPI', cusip: '61774R866 ', isin: 'US61774R8667' },
+    fees: { grossExpenseRatio: ' 0.35 ', netExpenseRatio: ' 0.29 ' },
+    benchmarks: [{ name: 'Russell 1000 Value Index', benchmarkSubType: 'P' }, { name: 'ICE BofA 3-Month U.S. Treasury Bill Index', benchmarkSubType: 'S' }],
+  }] } },
+  pricing: { en: { shareClasses: [{ currencies: [{ pricings: { nav: ' 26.43 ', nav4f: ' 26.4276 ', marketPrice: ' 26.48 ', premiumDiscount: ' 0.05 ', premiumDiscountPercentage: ' 0.20 ', medianBid: ' 0.22 ', outstandingShares: ' 18,400,000 ', navAsOfDate: '10/01/2026' } }] }] } },
+  returns: { en: { shareClasses: [{ currencies: [{ performances: [
+    API_PERF('DAILY', '10/01/2026', { oneMonth: ' -4.08 ', ytd: ' 8.49 ', oneYr: ' 9.92 ', threeYr: '-- ', fiveYr: '-- ', tenYr: '-- ', si: ' 9.68 ', qtd: ' 0.80 ', threeMonths: ' 0.62 ' }),
+    API_PERF('MONTHLY', '09/30/2026', { oneMonth: ' -5.08 ', ytd: ' 7.63 ', oneYr: ' 9.00 ', threeYr: '-- ', fiveYr: '-- ', tenYr: '-- ', si: ' 9.40 ', qtd: ' 0.20 ', threeMonths: ' 0.20 ' }),
+    { ...API_PERF('MONTHLY', '09/30/2026', { ytd: ' 7.86 ' }), perfType: 'GRS' },
+    API_PERF('QUARTERLY', '09/30/2026', { oneMonth: ' -5.08 ', ytd: ' 7.63 ', oneYr: ' 9.00 ', threeYr: '-- ', fiveYr: '-- ', tenYr: '-- ', si: ' 9.40 ', qtd: ' 0.20 ', threeMonths: ' 0.20 ' }),
+  ] }] }] } },
+  yields: { en: { shareClasses: [{ currencies: [{ yield: { dailySec30Yield: ' 2.79 ', dailyAsofDate: '10/01/2026', sec30Yield: ' 2.63 ', thirtyDayAsofDate: '08/31/2026' } }] }] } },
+  distribution: { en: { shareClasses: [{ distributions: [
+    { exDistributionDate: '09/30/2026', recordDate: '09/30/2026', payableDate: '10/06/2026', dividendPerShare: ' 0.176725 ', totalCapitalGainPerShare: ' 0.000000 ' },
+    { exDistributionDate: '11/30/2023', recordDate: '12/01/2023', payableDate: '12/06/2023', dividendPerShare: ' 0.166059 ', totalCapitalGainPerShare: ' 0.000000 ' },
+  ] }] } },
+};
+
+describe('parseIssuerApi', () => {
+  const product = parseIssuerApi(API_FILES, 'PAPI');
+  test('identity, expense ratios and inception come from the detail file', () => {
+    expect(product.isin).toBe('US61774R8667');
+    expect(product.cusip).toBe('61774R866');
+    expect(product.netExpense).toBe(0.29);
+    expect(product.grossExpense).toBe(0.35);
+    expect(product.inception).toBe('2023-10-16');
+    expect(product.benchmark).toBe('Russell 1000 Value Index');
+  });
+  test('NAV, price, premium and net assets (shares x NAV, dated with the NAV)', () => {
+    expect(product.nav).toBe(26.4276);
+    expect(product.marketPrice).toBe(26.48);
+    expect(product.premiumDiscountPercent).toBe(0.2);
+    expect(product.netAssets).toBe(486_267_840);
+    expect(product.netAssetsDate).toBe('2026-10-01');
+    expect(product.netAssetsKind).toContain('derived');
+  });
+  test('returns are the month-end NAV row (not the daily one, not gross), absent tenors stay null', () => {
+    expect(product.monthEnd.asOfDate).toBe('2026-09-30');
+    expect(product.monthEnd.ytd).toBe(7.63);
+    expect(product.monthEnd.mo1).toBe(-5.08);
+    expect(product.monthEnd.qtd).toBe(0.2);
+    expect(product.monthEnd.yr1).toBe(9);
+    expect(product.monthEnd.yr3).toBeNull();
+    expect(product.monthEnd.yr10).toBeNull();
+    expect(product.quarterEnd.asOfDate).toBe('2026-09-30');
+    expect(product.monthEnd.sinceInception).toBe(9.4);
+  });
+  test('daily SEC yield wins over the monthly one and carries its own date; distributions ascend', () => {
+    expect(product.secYield).toBe(2.79);
+    expect(product.secYieldDate).toBe('2026-10-01');
+    expect(product.dividends.map((d) => d.exDate)).toEqual(['2023-11-30', '2026-09-30']);
+    expect(product.latestDividend?.amount).toBe(0.176725);
+    expect(product.frequencyCode).toBe('M');
+  });
+  test('an annualized since-inception rate over less than a year is null', () => {
+    const young = JSON.parse(JSON.stringify(API_FILES));
+    young.detail.en.inceptionDate = '06-01-2026';
+    expect(parseIssuerApi(young, 'PAPI').monthEnd.sinceInception).toBeNull();
+  });
+});
+
+describe('loadIssuerApi', () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = realFetch; });
+  test('reads the five files through the proxy envelope; any failed file fails the whole read', async () => {
+    const urls: string[] = [];
+    const bodies = [API_FILES.detail, API_FILES.pricing, API_FILES.returns, API_FILES.yields, API_FILES.distribution];
+    globalThis.fetch = (async (url: string) => {
+      urls.push(String(url));
+      if (!String(url).startsWith('https://r.jina.ai/')) return new Response('Access Denied', { status: 403 });
+      const index = urls.filter((u) => u.startsWith('https://r.jina.ai/')).length - 1;
+      return new Response(`Title: \n\nURL Source: x\n\nMarkdown Content:\n${JSON.stringify(bodies[index])}`);
+    }) as unknown as typeof fetch;
+    configureProxyGate(0);
+    const config = readConfig({ MAX_RETRIES: '1', REQUEST_SLEEP: '0' });
+    const product = await loadIssuerApi('100637', 'PAPI', config);
+    expect(product.nav).toBe(26.4276);
+    expect(urls.some((u) => u.includes('/EF/100637/detail/en-pricing.json'))).toBe(true);
+    globalThis.fetch = (async () => new Response('{"broken', { status: 200 })) as unknown as typeof fetch;
+    await expect(loadIssuerApi('100637', 'PAPI', config)).rejects.toThrow();
+  });
+});
+
+describe('no derived value is ever relabelled official', () => {
+  test('without this run\'s issuer facts a published fund is kept (fail), a never-published fund proceeds on a derived basis', () => {
+    expect(issuerGate(null, true, false)).toBe('fail');
+    expect(issuerGate(null, true, true)).toBe('skip');
+    expect(issuerGate(null, false, false)).toBe('proceed');
+    expect(issuerGate(parseIssuerApi(API_FILES, 'PAPI'), true, false)).toBe('proceed');
+  });
+  test('official returns are only this run\'s issuer row', () => {
+    expect(officialReturnsFor(null)).toEqual({ ytd: null, yr1: null, yr3: null, yr5: null, yr10: null, sinceInception: null });
+    expect(officialReturnsFor(parseIssuerApi(API_FILES, 'PAPI')).ytd).toBe(7.63);
+  });
+});
+
+describe('strict range parsing', () => {
+  test('bounds and colons are validated, never truncated or ignored', () => {
+    expect(() => parseAumRange('a:b')).toThrow();
+    expect(() => parseAumRange('1:2:3')).toThrow();
+    expect(() => parseAumRange('1.2.3M:')).toThrow();
+    expect(() => parseAumRange('5m:abc')).toThrow();
+    expect(() => parseRange('1:2:3', 'TER')).toThrow();
+    expect(parseAumRange('5m:1b')).toEqual({ min: 5e6, max: 1e9 });
+    expect(() => resolveControls({}, {}, {}, { AUM: 'a:b' })).toThrow();
+    expect(() => resolveControls({}, {}, {}, { TER: '1:2:3' })).toThrow();
+  });
+});
+
+describe('catalog card listing and cursor scope', () => {
+  test('the card layout of the catalog page lists every Parametric fund', () => {
+    const text = 'EVSM\n\n[Eaton Vance Short Duration Municipal Income ETF](https://www.eatonvance.com/products/etfs/municipals/eaton-vance-short-duration-municipal-income-etf.html)\n\nMarket Price as of 10/01/2026\n\n$49.22\n\nPAPI\n\n[Parametric Equity Premium Income ETF](https://www.eatonvance.com/products/etfs/us-equity/parametric-equity-premium-income-etf.html)\n\nMarket Price as of 10/01/2026\n\n![Up](https://x/a.svg)\n\n$26.48\n';
+    const list = parseIssuerCatalog(text);
+    expect(list.map((fund) => fund.ticker)).toEqual(['PAPI']);
+    expect(list[0].marketPrice).toBe(26.48);
+  });
+  test('a cursor is only valid for its own filter set', () => {
+    const a = readConfig({ TICKERS: 'PAPI' });
+    const b = readConfig({ TICKERS: 'PEPS' });
+    expect(cursorScope(a)).not.toBe(cursorScope(b));
+    expect(cursorScope(a)).toBe(cursorScope(readConfig({ TICKERS: 'PAPI' })));
+  });
+  test('since-inception is derived only from at least a year of history', () => {
+    const days = Array.from({ length: 200 }, (_, i) => ({ date: new Date(Date.UTC(2026, 0, 1) + i * 86_400_000).toISOString().slice(0, 10), close: 10 + i / 100, adjClose: 10 + i / 100, volume: 1 }));
+    expect(priceReturns(days, new Date('2026-07-20T00:00:00Z')).siAnn).toBeNull();
   });
 });
