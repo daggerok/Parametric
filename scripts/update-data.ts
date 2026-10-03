@@ -650,11 +650,11 @@ function secProxyHeaders(config: UpdaterConfig, kind: 'json' | 'xml' | 'text'): 
   return { ...secHeaders(config), ...(kind === 'xml' ? { 'X-Return-Format': 'html' } : {}) };
 }
 
-// The issuer's Akamai rule answers 403 to browser-looking and unknown agents (Bun's default, a Chrome string, even
-// a contact string: probed 2026-10-03 from a residential address) and 200 to plain HTTP-library agents such as
-// curl, python-requests, Go and okhttp, so the best-effort issuer reads identify as curl. Unproven from datacenter
-// IPs: the first denial still falls back to the proxy and then skips the issuer for the rest of the run.
-const ISSUER_UA = 'curl/8.7.1';
+// The issuer's Akamai rule answers 403 to browser-looking and unknown agents (probed 2026-10-03). Evading it by
+// presenting another client (e.g. curl) is not done: the issuer reads are best-effort with the same honest contact
+// agent as the SEC reads, the first denial falls back to the proxy and then skips the issuer for the rest of the run.
+// Fields only the issuer publishes (NAV, premium/discount, SEC yield, ISIN, CUSIP) stay null when it is unreachable.
+const ISSUER_UA = SEC_UA_DEFAULT;
 function issuerHeaders(): Record<string, string> {
   return { 'User-Agent': ISSUER_UA, Accept: 'application/json,text/html;q=0.9,*/*;q=0.8' };
 }
