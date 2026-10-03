@@ -71,12 +71,12 @@ on:
         default: ""
         type: string
       skip_issuer:
-        description: "Keep the previously published catalog and product-page data; use only fallbacks; blank inherits scripts/update-data.config.json"
+        description: "Never contact the issuer (catalog and product data); SEC EDGAR and Yahoo carry the funds; blank inherits scripts/update-data.config.json"
         required: false
         default: ""
         type: string
       edgar_fallback:
-        description: "Use SEC EDGAR Form N-PORT-P holdings when the issuer publishes no full sheet (default on); blank inherits scripts/update-data.config.json"
+        description: "Read SEC EDGAR for each fund (N-PORT-P holdings, net assets, monthly returns; 497K fees and inception); false disables every SEC read (default on); blank inherits scripts/update-data.config.json"
         required: false
         default: ""
         type: string

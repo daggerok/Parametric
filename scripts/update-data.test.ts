@@ -9,12 +9,13 @@ import {
   CONTROL_NAMES, PARAMETRIC_FUND_SLUGS, PARAMETRIC_PRODUCT_IDS, annualizedToTotal, batchSelection, chartUrl, cleanHoldingTicker,
   configureProxyGate, createRequestGate, cursorScope, deriveCatalogMetrics, eftsSearchUrl, fetchSecJson, fetchSecText, fetchWithRetry,
   fundFilterReasons, holdingsDownloadUrl, indicatedYield, inferDistributionFrequency, installSystemCa, isCertError, isParametricFundUrl,
-  isoFromEdgar, issuerFrequency, issuerFundUrl, issuerGate, lastCompletedQuarterEnd, loadIssuerApi, mergeHistory, nextCursor,
+  isoFromEdgar, issuerFrequency, issuerFundUrl, lastCompletedQuarterEnd, loadIssuerApi, mergeHistory, nextCursor,
   normalizeHoldingName, normalizeHoldingNameCore, normalizeSource, nportBelongsToFund, nportUrlFor, officialReturnsFor, parseAumRange,
   parseChart, parseCompanyTickerMap, parseEdgarAtomFilings, parseFundTickerMap, parseHoldingsCsv, parseIssuerApi, parseIssuerCatalog,
   parseIssuerDistributions, parseIssuerProduct, parseIssuerReturnsTable, parseKeyFacts, parseNport, parseNportAccessions, parseRange,
   parseTopHoldings, pickEftsCik, priceReturns, proxyPayload, readConfig, resolveControls, runPool, runtimeControls, totalToAnnualized,
-  withRequestLane,
+  edgarSeriesFilingsUrl, filingDocumentUrl, nportQuarterReturns, parseProspectusFacts, parseSubmissionDocuments, resetRunState, runFailed, runHealth,
+  sourceGate, withRequestLane,
 } from './update-data';
 
 const ROOT = new URL('../', import.meta.url);
@@ -31,6 +32,7 @@ afterEach(() => {
   globalThis.fetch = realFetch;
   process.exitCode = realExitCode;
   configureProxyGate(3200);
+  resetRunState();
   if (realTz === undefined) delete process.env.TZ; else process.env.TZ = realTz;
 });
 const mockFetch = (handler: (url: string, init?: RequestInit) => Response | Promise<Response>): void => {
@@ -173,7 +175,25 @@ const NPORT = `<?xml version="1.0" encoding="UTF-8"?><edgarSubmission><formData>
 <invstOrSec><name>RLI Corp.</name><title>RLI Corp.</title><cusip>N/A</cusip>
 <identifiers><isin value="US7496071074"/></identifiers><balance>35281.00000000</balance><valUSD>2084048.67000000</valUSD>
 <pctVal>0.521215307282</pctVal><assetCat>EC</assetCat></invstOrSec>
-</invstOrSecs></formData></edgarSubmission>`;
+</invstOrSecs><monthlyTotReturns><monthlyTotReturn classId="C000245536" rtn1="-1.37" rtn2="-1.02" rtn3="1.79"/></monthlyTotReturns></formData></edgarSubmission>`;
+// The previous quarter's filing: January, February and March 2026.
+const NPORT_Q1 = NPORT.replace('<repPdDate>2026-06-30', '<repPdDate>2026-03-31').replace('rtn1="-1.37" rtn2="-1.02" rtn3="1.79"', 'rtn1="2.00" rtn2="1.00" rtn3="-1.50"');
+
+// Summary prospectus (497K): flattened text of the fee table, with and without a fee waiver, as HTML.
+const PROSPECTUS = (fees: string) => `<html><body><p>Parametric Equity Premium Income ETF &#8202; Summary Prospectus&nbsp;&nbsp;|&nbsp; January 28, 2026</p>
+<p>Ticker Symbol and Exchange Parametric Equity Premium Income ETF PAPI NYSE Arca</p>
+<table><tr><td>Annual Fund Operating Expenses 1 (expenses that you pay each year)</td></tr>${fees}</table>
+<p>3 Since Inception reflects the inception date of the Fund (commenced operations on 10/16/23).</p></body></html>`;
+const FEES_PLAIN = '<tr><td>Management Fee 1</td><td>0.29%</td></tr><tr><td>Total Annual Fund Operating Expenses</td><td>0.29%</td></tr>';
+const FEES_WAIVER = '<tr><td>Total Annual Fund Operating Expenses 2</td><td>0.40%</td></tr><tr><td>Fee Waiver 2</td><td>0.15%</td></tr><tr><td>Total Annual Fund Operating Expenses After Fee Waiver 2</td><td>0.25%</td></tr>';
+const ATOM_NPORT = `<feed><entry><content><accession-number>0002071691-26-018745</accession-number><filing-date>2026-08-21</filing-date><filing-type>NPORT-P</filing-type></content></entry>
+<entry><content><accession-number>0002071691-26-011935</accession-number><filing-date>2026-05-27</filing-date><filing-type>NPORT-P</filing-type></content></entry></feed>`;
+const ATOM_497K = `<feed><entry><content><accession-number>0001133228-26-001031</accession-number><filing-date>2026-01-29</filing-date><filing-type>497K</filing-type></content></entry>
+<entry><content><accession-number>0001133228-26-000002</accession-number><filing-date>2026-01-02</filing-date><filing-type>497</filing-type></content></entry></feed>`;
+const SUBMISSIONS = { cik: '1676326', filings: { recent: {
+  form: ['NPORT-P', '497K', '497K'], accessionNumber: ['0002071691-26-018745', '0001133228-26-001031', '0001104659-26-112235'],
+  primaryDocument: ['xslFormNPORT-P_X01/primary_doc.xml', 'pepietf-efp22532_497k.htm', 'tm2626540d1_497k.htm'],
+} } };
 
 const ATOM = `<?xml version="1.0" encoding="ISO-8859-1" ?><feed xmlns="http://www.w3.org/2005/Atom">
 <entry><content type="text/xml"><accession-number>0002071691-26-018745</accession-number>
@@ -587,6 +607,29 @@ describe('parsing', () => {
     expect(eftsSearchUrl('PAPI')).toContain('forms=NPORT-P');
   });
 
+  test('SEC: the N-PORT-P monthly NAV returns of a quarter parse per share class, a missing figure is null', () => {
+    expect(parseNport(NPORT).monthlyReturns).toEqual([{ classId: 'C000245536', months: [-1.37, -1.02, 1.79] }]);
+    expect(parseNport(NPORT.replace('rtn2="-1.02"', 'rtn2="N/A"')).monthlyReturns[0].months).toEqual([-1.37, null, 1.79]);
+    expect(parseNport(NPORT.replace(/<monthlyTotReturns>.*<\/monthlyTotReturns>/, '')).monthlyReturns).toEqual([]);
+  });
+
+  test('SEC: the 497K summary prospectus gives gross and net fees, the inception date and the document date', () => {
+    expect(parseProspectusFacts(PROSPECTUS(FEES_PLAIN), 'PAPI')).toEqual({ documentDate: '2026-01-28', grossExpense: 0.29, netExpense: 0.29, inception: '2023-10-16' });
+    expect(parseProspectusFacts(PROSPECTUS(FEES_WAIVER), 'PAPI')).toMatchObject({ grossExpense: 0.4, netExpense: 0.25 }); // footnote digits are not figures
+    expect(parseProspectusFacts(PROSPECTUS(FEES_PLAIN).replace(/<[^>]+>/g, ' | '), 'PAPI')?.grossExpense).toBe(0.29); // markdown-like pipes (proxy text)
+    expect(parseProspectusFacts(PROSPECTUS(FEES_PLAIN), 'PEPS')).toBeNull(); // another fund's document
+    expect(parseProspectusFacts('<p>PAPI supplement, no fee table</p>', 'PAPI')).toBeNull();
+  });
+
+  test('SEC: the series Atom feed lists 497K filings and the submissions JSON names their primary documents', () => {
+    expect(edgarSeriesFilingsUrl('S000082252', 6, '497K')).toContain('type=497K');
+    expect(edgarSeriesFilingsUrl('S000082252')).toContain('type=NPORT-P');
+    expect(parseEdgarAtomFilings(ATOM_497K, '497K').map((filing) => filing.accession)).toEqual(['0001133228-26-001031']);
+    const documents = parseSubmissionDocuments(SUBMISSIONS, '497K');
+    expect([...documents.keys()]).toEqual(['0001133228-26-001031', '0001104659-26-112235']);
+    expect(filingDocumentUrl('0001676326', '0001133228-26-001031', documents.get('0001133228-26-001031')!)).toBe('https://www.sec.gov/Archives/edgar/data/1676326/000113322826001031/pepietf-efp22532_497k.htm');
+  });
+
   test('SEC proxy: the preamble and wrapper are stripped from json, xml and text', () => {
     expect(proxyPayload('Title: company_tickers_mf.json\n\nMarkdown Content:\n{"a":1}\n', 'json')).toBe('{"a":1}');
     expect(proxyPayload('  {"a":1}  ', 'json')).toBe('{"a":1}');
@@ -662,13 +705,25 @@ describe('metrics', () => {
     expect(deriveCatalogMetrics(NO_RETURNS, NO_DERIVED, null, null, null, null, null).performanceAsOf).toBeNull();
   });
 
-  test('no derived value is relabelled official: the issuer gate keeps a published fund when this run has no issuer facts', () => {
-    expect(issuerGate(null, true, false)).toBe('fail');
-    expect(issuerGate(null, true, true)).toBe('skip');
-    expect(issuerGate(null, false, false)).toBe('proceed');
-    expect(issuerGate(parseIssuerApi(API_FILES, 'PAPI'), true, false)).toBe('proceed');
+  test('no derived value is relabelled official: a published fund is kept when this run read no official source at all', () => {
+    expect(sourceGate(false, true, true)).toBe('fail');
+    expect(sourceGate(false, true, false)).toBe('skip');
+    expect(sourceGate(false, false, true)).toBe('proceed');
+    expect(sourceGate(true, true, true)).toBe('proceed'); // the issuer OR a SEC filing is enough
     expect(officialReturnsFor(null)).toEqual(NO_RETURNS);
     expect(officialReturnsFor(parseIssuerApi(API_FILES, 'PAPI')).ytd).toBe(7.63);
+  });
+
+  test('quarter-end returns from SEC months: compounded, dated by the newest filing, null unless every month is filed', () => {
+    const q1 = parseNport(NPORT_Q1);
+    const q2 = parseNport(NPORT);
+    const both = nportQuarterReturns([q2, q1], 'C000245536')!;
+    expect(both).toMatchObject({ asOfDate: '2026-06-30', mo1: 1.79, qtd: -0.63, ytd: 0.84, yr1: null }); // April to June, and January to June
+    expect(nportQuarterReturns([q2])).toMatchObject({ asOfDate: '2026-06-30', qtd: -0.63, ytd: null }); // January to March missing
+    expect(nportQuarterReturns([q1, q2], 'C999')!.ytd).toBe(0.84); // an unknown class falls back to the first one
+    expect(nportQuarterReturns([{ repPdDate: '', monthlyReturns: [] }])).toBeNull();
+    const year = ['2025-09-30', '2025-12-31', '2026-03-31', '2026-06-30'].map((repPdDate) => ({ repPdDate, monthlyReturns: [{ classId: 'C1', months: [1, 1, 1] as Array<number | null> }] }));
+    expect(nportQuarterReturns(year, 'C1')!.yr1).toBe(12.68); // twelve months at 1 percent
   });
 
   test('annualization, indicated yield and distribution cadence', () => {
@@ -706,6 +761,8 @@ globalThis.fetch = async (input) => {
   const url = String(input);
   if (failing.some((part) => url.includes(part))) return new Response('boom', { status: 500 });
   if (url.startsWith('https://query1.finance.yahoo.com/')) return new Response(JSON.stringify(fixtures.yahoo));
+  if (process.env.MOCK_ISSUER_DENIED === '1' && /eatonvance\\.com/.test(url)) return new Response('Access Denied', { status: 403 });
+  for (const [part, body] of fixtures.sec) if (url.includes(part)) return new Response(body);
   const api = /\\/EF\\/\\d+\\/detail\\/(en-[a-z-]+)\\.json/.exec(url);
   if (api) return new Response(JSON.stringify(fixtures.api[api[1]]));
   if (url === fixtures.catalogUrl) return new Response(fixtures.catalog);
@@ -731,6 +788,13 @@ function withSandbox(body: (box: Sandbox) => void): void {
     writeFileSync(join(dir, 'preload.ts'), PRELOAD);
     writeFileSync(join(dir, 'fixtures.json'), JSON.stringify({
       catalogUrl: configFile().CATALOG_URL, catalog: CATALOG, yahoo: YAHOO,
+      sec: [
+        ['company_tickers_mf.json', JSON.stringify(MF_TICKERS)], ['company_tickers.json', '{}'],
+        ['type=497K', ATOM_497K], ['type=NPORT-P', ATOM_NPORT],
+        ['/submissions/CIK0001676326.json', JSON.stringify(SUBMISSIONS)],
+        ['000113322826001031/pepietf-efp22532_497k.htm', PROSPECTUS(FEES_WAIVER)],
+        ['000207169126018745/primary_doc.xml', NPORT], ['000207169126011935/primary_doc.xml', NPORT_Q1],
+      ],
       api: { 'en-us-financial-advisor': API_FILES.detail, 'en-pricing': API_FILES.pricing, 'en-returns': API_FILES.returns, 'en-yield': API_FILES.yields, 'en-distribution': API_FILES.distribution },
     }));
     const files = (): Record<string, string> => {
@@ -832,16 +896,37 @@ describe('pipeline', () => {
     });
   });
 
-  test('a failed issuer source keeps the published fund exactly as it was; failing every selected fund exits non-zero', () => {
+  test('a failed issuer with no SEC answer keeps the published fund as it was; red only when nothing answered at all', () => {
     withSandbox(({ run, files, freeze, rewritten }) => {
       run();
       const published = files();
       freeze();
-      expect(run({}, issuerFailure('PAPI')).exitCode).toBe(0);
+      expect(run({}, issuerFailure('PAPI')).exitCode).toBe(0); // Yahoo answered and every other fund refreshed
       expect(files()).toEqual(published);
-      expect(run({ TICKERS: 'PAPI' }, issuerFailure('PAPI')).exitCode).toBe(1);
+      expect(run({ TICKERS: 'PAPI' }, issuerFailure('PAPI')).exitCode).toBe(0); // kept, but Yahoo still answered: a partial outage stays green
+      expect(run({ TICKERS: 'PAPI' }, [...issuerFailure('PAPI'), 'finance.yahoo.com', 'products/etfs.html']).exitCode).toBe(1); // nothing answered at all
       expect(files()).toEqual(published);
       expect(rewritten()).toEqual([]);
+    });
+  });
+
+  test('the issuer blocked and SEC EDGAR answering: official SEC fees and months, null NAV, derived returns labelled as such', () => {
+    withSandbox(({ run, files }) => {
+      run();
+      expect(run({ TICKERS: 'PAPI', EDGAR_FALLBACK: 'true', MOCK_ISSUER_DENIED: '1' }).exitCode).toBe(0);
+      const published = files();
+      const row = indexRows(published).find((item) => item.ticker === 'PAPI');
+      expect(row).toMatchObject({ terValue: 0.25, terGrossValue: 0.4, navValue: null, premiumDiscountValue: null, inceptionDate: 'Oct 16 2023', aumValue: 399_844_102.98, aumAsOfDate: 'Jun 30 2026' });
+      expect(row.metrics.secYield).toBeNull();
+      expect(row.metrics.returnsBasis).toContain('derived from the Yahoo');
+      expect(row.metrics.performanceAsOf).toBe('2026-08-17'); // the last Yahoo day, never the SEC quarter-end
+      const meta = JSON.parse(published['funds/PAPI/meta.json']);
+      expect(meta.expense.source).toContain('SEC Form 497K');
+      expect(meta.returns.quarterEnd).toMatchObject({ asOfDate: 'Jun 30 2026', ytd: 0.84, yr1: null });
+      expect(meta.returns.quarterEndBasis).toContain('N-PORT-P');
+      expect(meta.nav.value).toBeNull();
+      expect(meta.holdings.source).toContain('N-PORT-P');
+      expect(indexRows(published).map((item) => item.ticker)).toEqual(['PAPI', 'PEPS', 'PHEQ']);
     });
   });
 
@@ -960,6 +1045,22 @@ describe('network', () => {
     expect(urls.some((url) => url.includes('/EF/100637/detail/en-pricing.json'))).toBe(true);
     mockFetch(() => new Response('{"broken'));
     await expect(loadIssuerApi('100637', 'PAPI', config)).rejects.toThrow();
+  });
+
+  test('a denied issuer is asked once through the proxy (one retry), then skipped; the run counts answered requests', async () => {
+    const urls: string[] = [];
+    mockFetch((url) => { urls.push(url); return url.includes('eatonvance.com') ? new Response('denied', { status: 403 }) : new Response('{}'); });
+    configureProxyGate(0);
+    const config = readConfig({ MAX_RETRIES: '2', REQUEST_SLEEP: '0' });
+    await expect(withRequestLane(0, () => loadIssuerApi('100637', 'PAPI', config))).rejects.toThrow();
+    expect(urls.filter((url) => url.startsWith('https://r.jina.ai/'))).toHaveLength(2); // the proxy is retried at most once
+    expect(runHealth()).toEqual({ answered: 0, issuerUnreachable: true });
+    const before = urls.length;
+    await expect(withRequestLane(0, () => loadIssuerApi('100638', 'PHEQ', config))).rejects.toThrow('unreachable');
+    expect(urls).toHaveLength(before); // no further request to the blocked issuer
+    await withRequestLane(0, () => fetchWithRetry('https://data.sec.gov/x', '[ test ]', {}, 0));
+    expect(runHealth().answered).toBe(1);
+    expect([runFailed(3, 3, 0), runFailed(3, 3, 1), runFailed(3, 1, 0), runFailed(0, 0, 0)]).toEqual([true, false, false, false]);
   });
 
   test('HISTORY_RANGE sets an explicit Yahoo window: period1 = 0 for max, N years back otherwise', () => {

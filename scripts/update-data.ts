@@ -146,13 +146,11 @@ const EDGAR_BROWSE_URL = 'https://www.sec.gov/cgi-bin/browse-edgar';
 const SEC_FUND_TICKERS_URL = 'https://www.sec.gov/files/company_tickers_mf.json';
 const SEC_COMPANY_TICKERS_URL = 'https://www.sec.gov/files/company_tickers.json';
 const SEC_UA_DEFAULT = 'daggerok ETF feed daggerok@gmail.com';
-// The issuer sits behind an Akamai bot manager that answers 403 to a plain
-// fetch, from both this sandbox and GitHub Actions runners (verified
-// 2026-10-01). The read-only rendering proxy is the documented sibling
-// workaround (Franklin / ARK / Schwab); because a run that only needs the
-// catalog and three fund pages would otherwise never reach the switch, one
-// denial is already enough. The counter resets whenever a direct request
-// succeeds, so a single transient 403 does not move the rest of the run.
+// The issuer sits behind an Akamai bot manager that answered 403 to this updater from GitHub runners (CI run of
+// 2026-10-02: catalog, proxy and every product file denied). It is a best-effort source: one denial already sends the
+// request through the read-only rendering proxy (the documented sibling workaround), and a denied proxy marks the
+// issuer unreachable for the rest of the run. SEC EDGAR and Yahoo carry the feed in that case. The counter resets
+// whenever a direct request succeeds, so a single transient 403 does not move the rest of the run.
 const ISSUER_DENIAL_LIMIT = 1;
 const RENDER_PROXY = 'https://r.jina.ai';
 // r.jina.ai anonymous tier allows about 20 requests per minute
@@ -577,6 +575,23 @@ function isProxyUrl(url: string): boolean {
 async function paceRequests(url: string): Promise<void> {
   await (isProxyUrl(url) ? proxyGate : (requestLane.getStore() ?? discoveryGate))();
 }
+// Run-level health: how many requests were answered with a success, and whether the issuer was
+// found unreachable (direct and through the proxy). A run that refreshed nothing but saw at least
+// one source answer must not turn the weekly job red forever; exit 1 is for "nothing answered".
+let answeredRequests = 0;
+let issuerUnreachable = false;
+export function runHealth(): { answered: number; issuerUnreachable: boolean } {
+  return { answered: answeredRequests, issuerUnreachable };
+}
+/** Test hook: forgets the one-way switches and counters of this process. */
+export function resetRunState(): void {
+  answeredRequests = 0;
+  issuerUnreachable = false;
+  issuerDirectDenials = 0;
+  issuerProxyOnly = false;
+  secDirectDenials = 0;
+  secProxyOnly = false;
+}
 class HttpError extends Error {
   constructor(
     message: string,
@@ -607,7 +622,7 @@ export async function fetchWithRetry(
     await paceRequests(url);
     try {
       const response = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(45000), ...init });
-      if (response.ok) return response;
+      if (response.ok) { answeredRequests += 1; return response; }
       const retryable = [403, 408, 425, 429].includes(response.status) || response.status >= 500;
       if (!retryable) throw new HttpError(`${label}: HTTP ${response.status} ${response.statusText}`, response.status, false);
       lastError = new HttpError(`${label}: HTTP ${response.status} (attempt ${attempt + 1} of ${maxRetries + 1})`, response.status, true);
@@ -635,8 +650,13 @@ function secProxyHeaders(config: UpdaterConfig, kind: 'json' | 'xml' | 'text'): 
   return { ...secHeaders(config), ...(kind === 'xml' ? { 'X-Return-Format': 'html' } : {}) };
 }
 
+// The issuer's Akamai rule answers 403 to browser-looking and unknown agents (probed 2026-10-03). Evading it by
+// presenting another client (e.g. curl) is not done: the issuer reads are best-effort with the same honest contact
+// agent as the SEC reads, the first denial falls back to the proxy and then skips the issuer for the rest of the run.
+// Fields only the issuer publishes (NAV, premium/discount, SEC yield, ISIN, CUSIP) stay null when it is unreachable.
+const ISSUER_UA = SEC_UA_DEFAULT;
 function issuerHeaders(): Record<string, string> {
-  return { 'User-Agent': YAHOO_BROWSER_UA, Accept: 'text/html,application/xhtml+xml,*/*' };
+  return { 'User-Agent': ISSUER_UA, Accept: 'application/json,text/html;q=0.9,*/*;q=0.8' };
 }
 
 // The issuer (Akamai bot manager) answers 403 to a plain fetch. After a small
@@ -652,11 +672,24 @@ export function stripProxyPreamble(text: string): string {
   return marker >= 0 ? text.slice(marker + 'Markdown Content:'.length).replace(/^\s+/, '') : text;
 }
 
-async function fetchIssuerText(url: string, label: string, config: UpdaterConfig): Promise<string> {
-  if (issuerProxyOnly) {
+// Best-effort source: direct first, the rendering proxy only after a denial (global gate, one retry),
+// and once both are denied the issuer is skipped for the rest of the run instead of being hammered.
+async function fetchIssuerViaProxy(url: string, label: string, config: UpdaterConfig): Promise<string> {
+  try {
     const response = await fetchWithRetry(issuerUrl(url), `${label} (proxy)`, { headers: issuerHeaders() }, config.maxRetries);
     return stripProxyPreamble(await response.text());
+  } catch (error) {
+    if (error instanceof HttpError && [403, 429].includes(error.status) && !issuerUnreachable) {
+      issuerUnreachable = true;
+      console.warn(`[ issuer   ] unreachable from here (direct and proxy denied) - the issuer is skipped for the rest of this run; SEC EDGAR and Yahoo carry the feed`);
+    }
+    throw error;
   }
+}
+
+async function fetchIssuerText(url: string, label: string, config: UpdaterConfig): Promise<string> {
+  if (issuerUnreachable) throw new Error(`${label}: issuer unreachable earlier in this run`);
+  if (issuerProxyOnly) return fetchIssuerViaProxy(url, label, config);
   try {
     const response = await fetchWithRetry(url, label, { headers: issuerHeaders() }, 0);
     issuerDirectDenials = 0;
@@ -667,9 +700,8 @@ async function fetchIssuerText(url: string, label: string, config: UpdaterConfig
     issuerDirectDenials += 1;
     if (issuerDirectDenials < ISSUER_DENIAL_LIMIT) throw error;
     issuerProxyOnly = true;
-    console.warn(`[ issuer   ] ${label}: ${errorMessage(error)} — switching to the read-only rendering proxy for the rest of this run`);
-    const response = await fetchWithRetry(issuerUrl(url), `${label} (proxy)`, { headers: issuerHeaders() }, config.maxRetries);
-    return stripProxyPreamble(await response.text());
+    console.warn(`[ issuer   ] ${label}: ${errorMessage(error)} - switching to the read-only rendering proxy for the rest of this run`);
+    return fetchIssuerViaProxy(url, label, config);
   }
 }
 
@@ -900,6 +932,8 @@ export type ParsedNport = {
   totalValue: number;
   netAssets: number | null;
   designatedIndex: string;
+  /** Official monthly NAV total returns (percent) of the three months of the report quarter, oldest first, per share class. */
+  monthlyReturns: Array<{ classId: string; months: Array<number | null> }>;
 };
 
 export type HistoryPoint = { date: string; nav: number | null; marketPrice: number | null; premiumDiscount: number | null };
@@ -1124,11 +1158,11 @@ export function parseCompanyTickerMap(payload: JsonRecord): Map<string, string> 
   return map;
 }
 
-export function edgarSeriesFilingsUrl(seriesId: string, count = 10): string {
+export function edgarSeriesFilingsUrl(seriesId: string, count = 10, form = 'NPORT-P'): string {
   const params = new URLSearchParams({
     action: 'getcompany',
     CIK: String(seriesId || '').toUpperCase(),
-    type: 'NPORT-P',
+    type: form,
     dateb: '',
     owner: 'include',
     count: String(count),
@@ -1139,12 +1173,12 @@ export function edgarSeriesFilingsUrl(seriesId: string, count = 10): string {
 
 // browse-edgar's Atom feed for one series: the newest N-PORT-P accessions of
 // exactly that fund, newest first.
-export function parseEdgarAtomFilings(xml: string): NportAccession[] {
+export function parseEdgarAtomFilings(xml: string, formPrefix = 'NPORT'): NportAccession[] {
   const result: NportAccession[] = [];
   for (const entry of String(xml || '').matchAll(/<entry>([\s\S]*?)<\/entry>/gi)) {
     const body = entry[1];
     const form = tagValue(body, 'filing-type') || tagValue(body, 'type');
-    if (form && !form.toUpperCase().startsWith('NPORT')) continue;
+    if (form && !form.toUpperCase().startsWith(formPrefix)) continue;
     const accession = tagValue(body, 'accession-number') || tagValue(body, 'accession-nunber');
     if (!accession) continue;
     const hrefMatch = /<filing-href>([\s\S]*?)<\/filing-href>/i.exec(body);
@@ -1213,7 +1247,103 @@ export function parseNport(xml: string): ParsedNport {
     totalValue,
     netAssets: numberOrNull(normalizeNumberText(tagValue(fundInfo, 'netAssets'))),
     designatedIndex: tagValue(fundInfo, 'nameDesignatedIndex'),
+    monthlyReturns: [...String(xml || '').matchAll(/<monthlyTotReturn\b([^>]*)\/?>/gi)].map((match) => {
+      const attr = (name: string): string => new RegExp(`\\b${name}="([^"]*)"`, 'i').exec(match[1])?.[1] ?? '';
+      return { classId: attr('classId').toUpperCase(), months: [attr('rtn1'), attr('rtn2'), attr('rtn3')].map((raw) => numberOrNull(raw)) };
+    }),
   };
+}
+
+/**
+ * Official quarter-end returns of one share class from SEC N-PORT-P filings: every filing carries the
+ * NAV total return of each month of its quarter, so year-to-date and one-year figures are those monthly
+ * returns compounded (a derived figure, rounded like the filed months). A horizon is null unless every
+ * month of it is present in the filings.
+ */
+export type SecReturns = { asOfDate: string; mo1: number | null; qtd: number | null; ytd: number | null; yr1: number | null };
+export function nportQuarterReturns(filings: Array<Pick<ParsedNport, 'repPdDate' | 'monthlyReturns'>>, classId = ''): SecReturns | null {
+  const months = new Map<string, number>();
+  let latest = '';
+  for (const filing of filings) {
+    const match = /^(\d{4})-(\d{2})-\d{2}$/.exec(filing.repPdDate || '');
+    if (!match) continue;
+    const row = filing.monthlyReturns.find((item) => classId && item.classId === classId.toUpperCase()) ?? filing.monthlyReturns[0];
+    if (!row) continue;
+    if (filing.repPdDate > latest) latest = filing.repPdDate;
+    const end = Number(match[1]) * 12 + Number(match[2]) - 1;
+    row.months.forEach((value, index) => {
+      if (value === null) return;
+      const key = end - 2 + index;
+      months.set(`${Math.floor(key / 12)}-${String((key % 12) + 1).padStart(2, '0')}`, value);
+    });
+  }
+  const last = /^(\d{4})-(\d{2})-\d{2}$/.exec(latest);
+  if (!last) return null;
+  const endIndex = Number(last[1]) * 12 + Number(last[2]) - 1;
+  const compound = (count: number): number | null => {
+    let factor = 1;
+    for (let back = 0; back < count; back++) {
+      const key = endIndex - back;
+      const value = months.get(`${Math.floor(key / 12)}-${String((key % 12) + 1).padStart(2, '0')}`);
+      if (value === undefined) return null;
+      factor *= 1 + value / 100;
+    }
+    return round((factor - 1) * 100, 2);
+  };
+  const lastKey = `${Math.floor(endIndex / 12)}-${String((endIndex % 12) + 1).padStart(2, '0')}`;
+  const result = { asOfDate: latest, mo1: months.has(lastKey) ? months.get(lastKey)! : null, qtd: compound(3), ytd: compound(Number(last[2])), yr1: compound(12) };
+  return result.mo1 === null && result.qtd === null ? null : result;
+}
+
+// Summary prospectus (Form 497K) facts: the fee table and the inception date. The document is XBRL-free
+// HTML (or markdown through the proxy), so the figures are read from the flattened text.
+export type ProspectusFacts = { documentDate: string | null; grossExpense: number | null; netExpense: number | null; inception: string | null };
+export function htmlToPlain(html: string): string {
+  return String(html || '')
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&#x([0-9a-f]+);/gi, (_m, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_m, dec: string) => String.fromCodePoint(Number(dec)))
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"')
+    .replace(/[\u200a\u200b\u00a0|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+export function parseProspectusFacts(html: string, ticker: string): ProspectusFacts | null {
+  const text = htmlToPlain(html);
+  if (!new RegExp(`\\b${ticker.replace(/[^A-Z0-9]/gi, '')}\\b`).test(text.slice(0, 4000))) return null;
+  const start = text.search(/Annual Fund Operating Expenses/i);
+  const section = start >= 0 ? text.slice(start, start + 3000) : '';
+  const percent = (value: string | undefined): number | null => {
+    const number = numberOrNull(value ?? '');
+    return number !== null && number > 0 && number <= 10 ? number : null;
+  };
+  const gross = percent(/Total Annual (?:Fund )?Operating Expenses(?:\s+\d{1,2})?\s+(\d+(?:\.\d+)?)\s*%/i.exec(section)?.[1]);
+  const net = percent(/Total Annual (?:Fund )?Operating Expenses After[^%\d]{0,100}?(?:\s\d{1,2})?\s(\d+\.\d+)\s*%/i.exec(section)?.[1]);
+  const inceptionMatch = /commenced operations on (\d{1,2})\/(\d{1,2})\/(\d{2,4})/i.exec(text);
+  const year = inceptionMatch ? Number(inceptionMatch[3]) + (inceptionMatch[3].length === 2 ? 2000 : 0) : 0;
+  const inception = inceptionMatch ? `${year}-${inceptionMatch[1].padStart(2, '0')}-${inceptionMatch[2].padStart(2, '0')}` : null;
+  const dateMatch = /Summary Prospectus\s*(?:\|\s*)?([A-Z][a-z]+) (\d{1,2}), (\d{4})/.exec(text);
+  const monthIndex = dateMatch ? ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].indexOf(dateMatch[1]) : -1;
+  const documentDate = dateMatch && monthIndex >= 0 ? `${dateMatch[3]}-${String(monthIndex + 1).padStart(2, '0')}-${dateMatch[2].padStart(2, '0')}` : null;
+  if (gross === null && net === null) return null;
+  return { documentDate, grossExpense: gross ?? net, netExpense: net ?? gross, inception };
+}
+
+/** accession -> primary document name for one form family, from the registrant's submissions JSON. */
+export function parseSubmissionDocuments(submissions: JsonRecord, formPrefix: string): Map<string, string> {
+  const recent = submissions?.filings?.recent;
+  const map = new Map<string, string>();
+  if (!recent || !Array.isArray(recent.form)) return map;
+  recent.form.forEach((form: unknown, index: number) => {
+    const accession = String(recent.accessionNumber?.[index] || '');
+    const document = String(recent.primaryDocument?.[index] || '');
+    if (accession && document && String(form).toUpperCase().startsWith(formPrefix)) map.set(accession, document);
+  });
+  return map;
+}
+export function filingDocumentUrl(cik: string, accession: string, document: string): string {
+  return `${EDGAR_ARCHIVES}/${Number(String(cik).replace(/^0+/, '') || 0)}/${String(accession).replace(/-/g, '')}/${document}`;
 }
 
 // EDGAR full-text search maps a fund ticker to the registrant that filed its
@@ -2345,12 +2475,6 @@ export function annualizedSinceInception(value: number | null, inception: string
   return (end - start) / 86_400 >= 365 ? value : null;
 }
 
-/** Without this run's issuer facts a published fund is kept as it was; a fund never published before may proceed (derived basis). */
-export function issuerGate(product: ProductData | null, hasPublished: boolean, skipIssuer: boolean): 'proceed' | 'skip' | 'fail' {
-  if (product || !hasPublished) return 'proceed';
-  return skipIssuer ? 'skip' : 'fail';
-}
-
 /** Official returns are only ever the ones read from the issuer in this run, never older published values. */
 export function officialReturnsFor(product: ProductData | null): CatalogReturns {
   return mergeOfficial(product?.monthEnd ?? null, null);
@@ -2368,10 +2492,11 @@ function returnsBlock(
   asOfDate: string | null,
   previous: JsonRecord,
   issuer: { qtd: number | null; quarterEnd: OfficialReturns | null } | null = null,
+  sec: SecReturns | null = null,
 ): JsonRecord | null {
   const hasOfficial = Object.values(official).some((value) => value !== null);
   const hasDerived = Boolean(derived.asOfDate);
-  if (!hasOfficial && !hasDerived) return (previous.returns as JsonRecord) ?? null;
+  if (!hasOfficial && !hasDerived && !sec) return (previous.returns as JsonRecord) ?? null;
   const text = (value: number | null | undefined): string => (value === null || value === undefined ? '—' : `${value.toFixed(2)}%`);
   const asOf = asOfDate || derived.asOfDate;
   // With the issuer table in hand, 1-month and quarter-to-date are the table's own figures (an honest null stays null).
@@ -2400,15 +2525,23 @@ function returnsBlock(
       sinceInception: official.sinceInception ?? derived.siAnn,
       sinceInceptionText: text(official.sinceInception ?? derived.siAnn),
     },
+    // Which source the quarter-end block comes from is stated next to it: the issuer table, SEC N-PORT-P months compounded, or nothing.
+    quarterEndBasis: issuer?.quarterEnd
+      ? 'official Eaton Vance / MSIM quarter-end NAV returns (fund detail page)'
+      : sec
+        ? 'derived: official monthly NAV total returns from SEC Form N-PORT-P filings, compounded (year-to-date and one-year only when every month is filed); not the issuer table'
+        : 'not available: neither the issuer table nor SEC N-PORT-P months were read in this run',
     quarterEnd: issuer?.quarterEnd
       ? {
         asOfDate: issuer.quarterEnd.asOfDate ? formatEdgarDate(issuer.quarterEnd.asOfDate) : formatEdgarDate(lastCompletedQuarterEnd().toISOString().slice(0, 10)),
         ytd: issuer.quarterEnd.ytd, yr1: issuer.quarterEnd.yr1, yr3: issuer.quarterEnd.yr3, yr5: issuer.quarterEnd.yr5, yr10: issuer.quarterEnd.yr10, sinceInception: issuer.quarterEnd.sinceInception,
       }
-      : {
-        asOfDate: formatEdgarDate(lastCompletedQuarterEnd().toISOString().slice(0, 10)),
-        ytd: null, yr1: null, yr3: null, yr5: null, yr10: null, sinceInception: null,
-      },
+      : sec
+        ? { asOfDate: formatEdgarDate(sec.asOfDate), ytd: sec.ytd, yr1: sec.yr1, yr3: null, yr5: null, yr10: null, sinceInception: null }
+        : {
+          asOfDate: formatEdgarDate(lastCompletedQuarterEnd().toISOString().slice(0, 10)),
+          ytd: null, yr1: null, yr3: null, yr5: null, yr10: null, sinceInception: null,
+        },
   };
 }
 
@@ -2576,6 +2709,49 @@ async function loadIssuerHoldings(fund: CatalogFund, pageText: string, config: U
   return null;
 }
 
+// SEC Form 497K (summary prospectus): fees and inception. The series-filtered Atom feed lists the fund's own
+// 497K filings (supplements without a fee table are skipped), the registrant's submissions JSON names each
+// filing's primary document; both are cached per run.
+const PROSPECTUS_CANDIDATE_LIMIT = 4;
+const NPORT_RETURN_FILINGS = 4;
+const submissionDocumentCache = new Map<string, Promise<Map<string, string>>>();
+function loadSubmissionDocuments(cik: string, config: UpdaterConfig): Promise<Map<string, string>> {
+  let cached = submissionDocumentCache.get(cik);
+  if (!cached) {
+    cached = fetchSecJson(`${SEC_DATA_HOST}/submissions/CIK${cik.padStart(10, '0')}.json`, `[edgar   ] ${cik} submissions`, config).then((json) => parseSubmissionDocuments(json, '497K'));
+    submissionDocumentCache.set(cik, cached);
+  }
+  return cached;
+}
+export type ProspectusRead = { facts: ProspectusFacts; accession: string; filed: string; url: string };
+async function loadProspectus(fund: CatalogFund, config: UpdaterConfig): Promise<ProspectusRead | null> {
+  const ref = (await loadFundTickerMap(config)).get(fund.ticker);
+  if (!ref?.seriesId) return null;
+  const atom = await fetchSecText(edgarSeriesFilingsUrl(ref.seriesId, 6, '497K'), `[edgar   ] ${fund.ticker} 497K list`, config, 'xml');
+  const filings = parseEdgarAtomFilings(atom, '497K').slice(0, PROSPECTUS_CANDIDATE_LIMIT);
+  if (!filings.length) return null;
+  const documents = await loadSubmissionDocuments(ref.cik, config);
+  for (const filing of filings) {
+    const document = documents.get(filing.accession);
+    if (!document) continue;
+    const url = filingDocumentUrl(ref.cik, filing.accession, document);
+    const facts = parseProspectusFacts(await fetchSecText(url, `[ 497K     ] ${fund.ticker} ${filing.accession}`, config, 'xml'), fund.ticker);
+    if (facts) return { facts, accession: filing.accession, filed: filing.filed, url };
+  }
+  return null;
+}
+
+/** Exit code rule: red only when every selected fund failed AND no source answered a single request. */
+export function runFailed(selected: number, failures: number, answered: number): boolean {
+  return selected > 0 && failures === selected && answered === 0;
+}
+
+/** A published fund is kept (and the fund counted as failed) when this run read no official source for it; a new fund may proceed. */
+export function sourceGate(officialRead: boolean, hasPublished: boolean, officialSourcesEnabled: boolean): 'proceed' | 'skip' | 'fail' {
+  if (officialRead || !hasPublished) return 'proceed';
+  return officialSourcesEnabled ? 'fail' : 'skip';
+}
+
 function catalogFundFromIndex(ticker: string, row: JsonRecord): CatalogFund {
   const metrics = (row.metrics as JsonRecord) || {};
   const monthEnd = ((row.returns as JsonRecord)?.monthEnd as JsonRecord) || {};
@@ -2675,36 +2851,42 @@ async function processFund(
       }
     }
   }
-  // Every fund is either fully refreshed or fully kept: without the issuer facts a published fund stays exactly as it was
-  // (never a derived return next to an official label, never new prices next to stale returns).
-  const gate = issuerGate(product, Object.keys(previousMeta).length > 0, config.skipIssuer);
-  if (gate === 'skip') return null;
-  if (gate === 'fail') throw new Error('issuer data unavailable - kept the published fund unchanged');
+  const issuerAnswered = product !== null;
   const officialHoldings = pageText ? await loadIssuerHoldings(fund, pageText, config) : null;
   if (officialHoldings && product) product.holdings = officialHoldings;
   const cusip = product?.cusip || fund.cusip || String(previous.identifiers?.cusip || '');
 
-  // 2) Holdings: the issuer's own full sheet when it exists, SEC N-PORT-P otherwise.
+  // 2) SEC EDGAR, reachable from datacenter runners: N-PORT-P (holdings, net assets, monthly NAV returns) and the
+  //    497K summary prospectus (fees, inception). The issuer's own holdings sheet wins when the page was read.
   let holdings: ParsedHoldings | null = product?.holdings ?? null;
   let holdingsSource = holdings ? 'Eaton Vance official daily holdings download' : String(previous.holdings?.source || 'previous run');
+  const nportFilings: ParsedNport[] = [];
+  let nportAccession = '';
   let holdingsEdgar: ParsedNport | null = null;
-  if (!holdings && config.edgarFallback) {
+  let secReturns: SecReturns | null = null;
+  let prospectus: ProspectusRead | null = null;
+  if (config.edgarFallback) {
+    const needHoldings = !holdings;
+    const wanted = product ? 0 : NPORT_RETURN_FILINGS;
     try {
       const resolved = await resolveNportFilings(fund, config);
       if (resolved) {
         let checked = 0;
         for (const candidate of resolved.candidates) {
+          if ((!needHoldings || holdingsEdgar) && nportFilings.length >= wanted) break;
           let parsed: ParsedNport;
           try {
             parsed = await loadNportDocument(candidate, config);
           } catch (error) {
-            outputNote(`[ edgar    ] ${ticker}: ${candidate.accession}: ${errorMessage(error)} — trying the previous filing`);
+            console.warn(`[ edgar    ] ${ticker}: ${candidate.accession}: ${errorMessage(error)} - trying the previous filing`);
             continue;
           }
           checked += 1;
           if (!nportBelongsToFund(parsed, { seriesId: resolved.seriesId }, fund)) continue;
-          if (parsed.holdings.length) {
+          nportFilings.push(parsed);
+          if (needHoldings && !holdingsEdgar && parsed.holdings.length) {
             holdingsEdgar = parsed;
+            nportAccession = candidate.accession;
             holdings = {
               asOfDate: parsed.repPdDate || null,
               headers: HOLDINGS_HEADERS,
@@ -2712,14 +2894,30 @@ async function processFund(
             };
             holdingsSource = `SEC EDGAR Form N-PORT-P (accession ${candidate.accession}, report period ${parsed.repPdDate || 'n/a'})`;
           }
-          break;
         }
-        if (!holdings) outputNote(`[ edgar    ] ${ticker}: no N-PORT-P filing of this series among ${checked} checked — keeping previous holdings`);
+        if (!nportFilings.length) console.warn(`[ edgar    ] ${ticker}: no N-PORT-P filing of this series among ${checked} checked`);
       }
     } catch (error) {
-      outputNote(`[ edgar    ] ${ticker}: ${errorMessage(error)} — keeping previous holdings`);
+      console.warn(`[ edgar    ] ${ticker}: ${errorMessage(error)}`);
+    }
+    if (!product) {
+      const classId = (await loadFundTickerMap(config)).get(ticker)?.classId ?? '';
+      secReturns = nportQuarterReturns(nportFilings, classId);
+      try {
+        prospectus = await loadProspectus(fund, config);
+        if (!prospectus) console.warn(`[ edgar    ] ${ticker}: no 497K summary prospectus with a fee table found`);
+      } catch (error) {
+        console.warn(`[ edgar    ] ${ticker}: 497K: ${errorMessage(error)}`);
+      }
     }
   }
+  const latestNport: ParsedNport | null = holdingsEdgar ?? nportFilings[0] ?? null;
+
+  // Every fund is either refreshed from at least one official source or kept exactly as published: Yahoo prices alone never
+  // replace official facts, and a derived return is never printed next to an official label.
+  const gate = sourceGate(issuerAnswered || prospectus !== null || latestNport !== null, Object.keys(previousMeta).length > 0, !config.skipIssuer || config.edgarFallback);
+  if (gate === 'skip') return null;
+  if (gate === 'fail') throw new Error('no official source answered (issuer and SEC EDGAR) - kept the published fund unchanged');
 
   const holdingsRows: JsonRecord[] = holdings ? holdings.rows : await readPreviousSheet(ticker, 'holdings');
   const holdingsHeaders = holdings?.headers.length
@@ -2780,22 +2978,37 @@ async function processFund(
             ? inferDistributionFrequency(dividends)
             : { frequency: String((previous.distributions as JsonRecord)?.frequency || '—'), paymentsPerYear: null };
 
-  // 5) Headline numbers, official first, published values retained otherwise.
-  const inception = product?.inception ?? fund.inception ?? null;
+  // 5) Headline numbers: the issuer when it answered, SEC EDGAR otherwise; what neither carries is an honest null
+  //    (an older published NAV, TER or yield is never presented as current). Immutable facts (inception, identifiers) are kept.
+  const inception = product?.inception ?? prospectus?.facts.inception ?? fund.inception ?? null;
+  const inceptionSource = product?.inception ? 'issuer' : prospectus?.facts.inception ? 'sec-497k' : inception ? 'previous run (immutable)' : null;
   const returnsAsOfDate = product?.monthEnd.asOfDate ?? null;
   const official = officialReturnsFor(product);
   const officialCumulative = product?.quarterEnd ? { ...EMPTY_CUMULATIVE } : null;
-  // With the issuer facts in hand a missing figure is an honest null, never an older published one.
-  const ter = product ? (product.netExpense ?? product.grossExpense) : (fund.ter ?? null);
-  const terGross = product ? (product.grossExpense ?? product.netExpense) : null;
-  const nav = product ? product.nav : (fund.nav ?? null);
-  const price = product?.marketPrice ?? fund.close ?? chart?.regularMarketPrice ?? null;
-  const secYield = product ? product.secYield : (fund.secYield ?? null);
-  const secYieldDate = product ? product.secYieldDate : (fund.secYieldDate ?? null);
+  const feeNet = product ? product.netExpense : prospectus?.facts.netExpense ?? null;
+  const feeGross = product ? product.grossExpense : prospectus?.facts.grossExpense ?? null;
+  const ter = feeNet ?? feeGross;
+  const terGross = feeGross ?? feeNet;
+  const nav = product ? product.nav : null;
+  // Market price: the issuer's when read, else the Yahoo quote of this run, else the last close already in the published history (dated as such).
+  const lastKnownDay = chartDays.length ? chartDays[chartDays.length - 1] : null;
+  const price = product?.marketPrice ?? chart?.regularMarketPrice ?? lastKnownDay?.close ?? null;
+  const priceDate = product?.marketPrice != null
+    ? product.marketPriceDate
+    : chart?.regularMarketPrice != null
+      ? (chart.regularMarketTime ? epochToIsoDate(chart.regularMarketTime) : null)
+      : lastKnownDay?.date ?? null;
+  const priceSource = product?.marketPrice != null
+    ? 'official Eaton Vance / MSIM product data (market price)'
+    : chart?.regularMarketPrice != null
+      ? 'Yahoo Finance chart API (regular market price)'
+      : lastKnownDay ? 'last close in the published Yahoo history (this run could not reach Yahoo)' : 'not available';
+  const secYield = product ? product.secYield : null;
+  const secYieldDate = product ? product.secYieldDate : null;
   const metrics = deriveCatalogMetrics(
     official,
     derived,
-    product?.dividendYield ?? fund.dividendYield,
+    product?.dividendYield ?? null,
     secYield,
     latestDividend ? latestDividend.amount : null,
     frequency.paymentsPerYear,
@@ -2804,7 +3017,7 @@ async function processFund(
     returnsAsOfDate,
   );
 
-  const filterReasons = fundFilterReasons({ ticker, aumValue: product?.netAssets ?? holdingsEdgar?.netAssets ?? fund.netAssets, terValue: ter, metrics }, config);
+  const filterReasons = fundFilterReasons({ ticker, aumValue: product?.netAssets ?? latestNport?.netAssets ?? null, terValue: ter, metrics }, config);
   if (filterReasons.length) { outputNote(`[ filter   ] ${ticker}: ${filterReasons.join('; ')}`); return null; }
 
   const holdingsManifest = await writePages(fundDir, ticker, 'holdings', holdingsHeaders, holdingsRows, config.holdingsPageSize);
@@ -2813,23 +3026,24 @@ async function processFund(
 
   // Without a fresh issuer catalog the N-PORT-P series name is the most
   // authoritative fund name available.
-  const name = product?.name || holdingsEdgar?.seriesName || fund.name || String(previous.name ?? '') || ticker;
+  const name = product?.name || latestNport?.seriesName || fund.name || String(previous.name ?? '') || ticker;
   // The product page publishes the premium/discount in dollars; the sibling
   // feeds publish a percentage, so it is computed from the page's own NAV and
   // market price (and the published dollar figure is kept alongside).
-  const premiumDiscountAmount = product?.premiumDiscountAmount ?? fund.premiumDiscountAmount ?? null;
-  const premiumDiscount = nav && price ? round(((price - nav) / nav) * 100, 2) : (product ? null : fund.premiumDiscount ?? null);
-  const nportNetAssets = holdingsEdgar
-    ? holdingsEdgar.netAssets ?? (holdingsEdgar.totalValue ? round(holdingsEdgar.totalValue, 2) : null)
+  const premiumDiscountAmount = product?.premiumDiscountAmount ?? null;
+  const premiumDiscount = nav && price ? round(((price - nav) / nav) * 100, 2) : null;
+  const nportNetAssets = latestNport
+    ? latestNport.netAssets ?? (latestNport.totalValue ? round(latestNport.totalValue, 2) : null)
     : null;
   const catalogNetAssets = product?.netAssets ?? null;
   const netAssets = catalogNetAssets ?? nportNetAssets ?? (product ? null : (fund.netAssets ?? null));
-  const aumDate = catalogNetAssets !== null ? (product?.netAssetsDate ?? null) : (nportNetAssets !== null ? (holdingsEdgar?.repPdDate || null) : null);
-  const navAsOfDate = product?.navDate ?? (chart?.regularMarketTime ? epochToIsoDate(chart.regularMarketTime) : fund.asOfDate ?? null);
-  const returnsData = returnsBlock(derived, official, product ? product.monthEnd.mo1 : (fund.mo1 ?? null), returnsAsOfDate, previous, product ? { qtd: product.monthEnd.qtd ?? null, quarterEnd: product.quarterEnd } : null);
-  const asOfLabel = navAsOfDate ? formatEdgarDate(navAsOfDate) : String(previous.asOfDate ?? '—');
+  const aumDate = catalogNetAssets !== null ? (product?.netAssetsDate ?? null) : (nportNetAssets !== null ? (latestNport?.repPdDate || null) : null);
+  const navAsOfDate = product?.navDate ?? null;
+  const returnsData = returnsBlock(derived, official, product ? product.monthEnd.mo1 : null, returnsAsOfDate, previous, product ? { qtd: product.monthEnd.qtd ?? null, quarterEnd: product.quarterEnd } : null, secReturns);
+  const rowAsOfDate = navAsOfDate ?? priceDate;
+  const asOfLabel = rowAsOfDate ? formatEdgarDate(rowAsOfDate) : String(previous.asOfDate ?? '—');
   const category = product?.assetClass && product.assetClass !== 'ETF' ? product.assetClass : fund.category;
-  const benchmark = product?.benchmark || holdingsEdgar?.designatedIndex || fund.benchmark;
+  const benchmark = product?.benchmark || latestNport?.designatedIndex || fund.benchmark;
   const exchange = product?.exchange || fund.exchange || chart?.exchangeName || String(previous.exchange ?? '');
   const fundPage = PARAMETRIC_FUND_SLUGS[ticker] ? issuerFundUrl(ticker) : fund.fundPage;
   const holdingsCount = holdings ? holdingsRows.length : previousHoldingsCount;
@@ -2845,47 +3059,58 @@ async function processFund(
       yahooChart: `${YAHOO_CHART_URL}/${encodeURIComponent(ticker)}`,
       holdingsSource,
       historySource,
-      provider: 'Eaton Vance / MSIM product data service (www.eatonvance.com/im/json/imwebdata) + SEC EDGAR Form N-PORT-P (holdings) + Yahoo Finance public chart API (NAV history and dividends)',
+      provider: `${product ? 'Eaton Vance / MSIM product data service (www.eatonvance.com/im/json/imwebdata) + ' : ''}SEC EDGAR (Form 497K fees and inception, Form N-PORT-P holdings, net assets and monthly NAV returns) + Yahoo Finance public chart API (market price, history and dividends)`,
+      prospectus: prospectus ? { url: prospectus.url, accession: prospectus.accession, filed: prospectus.filed, documentDate: prospectus.facts.documentDate } : null,
+      factsFrom: product ? 'issuer' : 'sec-edgar',
     },
     identifiers: { cusip: cusip || null, isin: product?.isin || fund.isin || null, indexTicker: benchmark || null },
     inception: {
       fundInceptionDate: inception,
       inceptionDate: inception ? formatEdgarDate(inception) : null,
       listingDate: null,
+      source: inceptionSource === 'issuer'
+        ? 'official Eaton Vance / MSIM product data'
+        : inceptionSource === 'sec-497k'
+          ? `SEC Form 497K summary prospectus (accession ${prospectus?.accession}, "commenced operations")`
+          : inceptionSource,
     },
     expense: {
       gross: terGross,
       net: ter,
       display: ter === null ? '—' : `${ter.toFixed(2)}%`,
-      grossDisplay: product?.grossExpense === null || product?.grossExpense === undefined ? null : `${product.grossExpense.toFixed(2)}%`,
-      netDisplay: product?.netExpense === null || product?.netExpense === undefined ? null : `${product.netExpense.toFixed(2)}%`,
-      asOf: asOfLabel,
-      source: 'official Eaton Vance / MSIM product data (net and gross expense ratio; terValue is the net ratio)',
+      grossDisplay: feeGross === null ? null : `${feeGross.toFixed(2)}%`,
+      netDisplay: feeNet === null ? null : `${feeNet.toFixed(2)}%`,
+      asOf: product ? asOfLabel : prospectus ? formatEdgarDate(prospectus.facts.documentDate || prospectus.filed) : '—',
+      source: product
+        ? 'official Eaton Vance / MSIM product data (net and gross expense ratio; terValue is the net ratio)'
+        : prospectus
+          ? `official SEC Form 497K summary prospectus dated ${prospectus.facts.documentDate || prospectus.filed} (accession ${prospectus.accession}): gross = total annual fund operating expenses, net = after fee waiver; terValue is the net ratio`
+          : 'not available: neither the issuer nor a SEC 497K fee table was read in this run',
     },
     nav: {
       display: nav === null ? '—' : `$${nav.toFixed(2)}`,
       value: nav,
       asOfDate: navAsOfDate,
-      source: product ? 'official Eaton Vance / MSIM product data (pricing)' : 'not available',
+      source: product ? 'official Eaton Vance / MSIM product data (pricing)' : 'not available: the per-share NAV is published only on the issuer site, which blocks datacenter runners (SEC filings carry no daily NAV)',
     },
     marketPrice: {
       display: price === null ? '—' : `$${price.toFixed(2)}`,
       value: price,
-      asOfDate: navAsOfDate,
-      source: product ? 'official Eaton Vance / MSIM product data (market price)' : 'Yahoo Finance chart API (last close)',
+      asOfDate: priceDate,
+      source: priceSource,
     },
     premiumDiscount: {
       display: premiumDiscount === null ? '—' : `${premiumDiscount.toFixed(2)}%`,
       value: premiumDiscount,
       asOfDate: navAsOfDate,
-      source: product ? 'official Eaton Vance / MSIM product data (premium/discount percentage)' : 'previous run',
+      source: product ? 'computed from the issuer NAV and market price of the same date' : 'not available without the issuer NAV',
       amount: premiumDiscountAmount,
     },
     bidAskSpread: {
       display: product?.bidAskSpread === null || product?.bidAskSpread === undefined ? '—' : `${product.bidAskSpread.toFixed(2)}%`,
       value: product?.bidAskSpread ?? null,
       asOfDate: navAsOfDate,
-      source: 'official Eaton Vance / MSIM product data (median bid/ask spread)',
+      source: product ? 'official Eaton Vance / MSIM product data (median bid/ask spread)' : 'not available without the issuer product data',
     },
     aum: {
       display: netAssets === null ? '—' : `$${(netAssets / 1e6).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} M`,
@@ -2894,7 +3119,7 @@ async function processFund(
       source: catalogNetAssets !== null
         ? (product?.netAssetsKind || 'official Eaton Vance / MSIM product page (total net assets)')
         : nportNetAssets !== null
-          ? `SEC Form N-PORT-P net assets (report period ${holdingsEdgar?.repPdDate || 'n/a'}; older than the NAV date)`
+          ? `official SEC Form N-PORT-P net assets as of the report period ${latestNport?.repPdDate || 'n/a'} (a quarter-end figure, older than the prices)`
           : 'not available',
     },
     yields: {
@@ -2907,7 +3132,7 @@ async function processFund(
       secYieldText: metrics.secYieldText,
       secYieldKind: metrics.secYield !== null
         ? `30-day SEC yield as published by eatonvance.com${secYieldDate ? `, as of ${formatEdgarDate(secYieldDate)}` : ''}`
-        : 'not published by eatonvance.com for this fund',
+        : 'not available: published only on the issuer site (blocked for datacenter runners) and not in SEC filings',
     },
     returns: returnsData ? { ...returnsData, returnsBasis: metrics.returnsBasis, performanceAsOf: metrics.performanceAsOf } : returnsData,
     distributions: {
@@ -3128,8 +3353,15 @@ async function main(): Promise<void> {
   let catalogSource = 'previous published index';
   if (!config.skipIssuer) {
     try {
-      const html = await fetchIssuerText(config.catalogUrl, '[ catalog  ]', config);
-      for (const entry of parseIssuerCatalog(html)) {
+      let entries: CatalogEntry[];
+      try {
+        entries = parseIssuerCatalog(await fetchIssuerText(config.catalogUrl, '[ catalog  ]', config));
+      } catch (error) {
+        // The catalog is rendered client side: a direct answer without fund links is retried once through the rendering proxy.
+        if (issuerProxyOnly || issuerUnreachable || !/no Parametric fund links/.test(errorMessage(error))) throw error;
+        entries = parseIssuerCatalog(await fetchIssuerViaProxy(config.catalogUrl, '[ catalog  ]', config));
+      }
+      for (const entry of entries) {
         const fund = catalogFundFromIndex(entry.ticker, previousIndex.get(entry.ticker) || {});
         fund.name = entry.name || fund.name;
         fund.fundPage = entry.fundPage;
@@ -3222,7 +3454,9 @@ async function main(): Promise<void> {
     `[ cursor   ] ${config.maxFetches > 0 && lastProcessedTicker ? `next run continues after ${lastProcessedTicker}` : 'full pass complete (cursor reset)'}`,
   );
 
-  if (failures && failures === selected.length) process.exitCode = 1;
+  // Red only when nothing could be refreshed AND no source answered at all; a partial outage that kept every published fund stays green.
+  if (runFailed(selected.length, failures, runHealth().answered)) process.exitCode = 1;
+  else if (failures) console.warn(`[ done     ] ${failures} fund(s) kept as published because their sources failed; ${runHealth().answered} requests were answered, so the run stays green`);
   if (process.env.GITHUB_STEP_SUMMARY) {
     await appendFile(
       process.env.GITHUB_STEP_SUMMARY,
