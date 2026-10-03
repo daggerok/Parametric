@@ -2,7 +2,7 @@
  "ticker": "PEPS",
  "page": 1,
  "pageSize": 1000,
- "totalRows": 364,
+ "totalRows": 365,
  "headers": [
   "Date",
   "Close",
@@ -2190,9 +2190,15 @@
   },
   {
    "Date": "Oct 01 2026",
-   "Close": "32.9366",
+   "Close": "32.937",
    "Adj Close": "32.94",
-   "Volume": "123"
+   "Volume": "100"
+  },
+  {
+   "Date": "Oct 02 2026",
+   "Close": "33.213001",
+   "Adj Close": "33.21",
+   "Volume": "100"
   }
  ]
 }

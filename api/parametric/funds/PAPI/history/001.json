@@ -2,7 +2,7 @@
  "ticker": "PAPI",
  "page": 1,
  "pageSize": 1000,
- "totalRows": 740,
+ "totalRows": 741,
  "headers": [
   "Date",
   "Close",
@@ -4449,6 +4449,12 @@
    "Close": "26.48",
    "Adj Close": "26.48",
    "Volume": "85100"
+  },
+  {
+   "Date": "Oct 02 2026",
+   "Close": "26.530001",
+   "Adj Close": "26.53",
+   "Volume": "143400"
   }
  ]
 }
