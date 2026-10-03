@@ -123,7 +123,7 @@ function outputCreateReporter(root: URL | string, total: number) {
   };
 }
 
-import { mkdir, readFile, writeFile, readdir, rm, appendFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, rm, appendFile, rename } from 'node:fs/promises';
 
 type JsonRecord = Record<string, any>;
 const ISSUER_SITE = 'https://www.eatonvance.com';
@@ -415,7 +415,8 @@ export function parseRange(raw: string, label: string): Range | undefined {
   if (!text.includes(':')) {
     throw new Error(`${label}: "${text}" must use the "min:max" range syntax (a colon is required)`);
   }
-  const [rawMin, rawMax] = text.split(':', 2);
+  if (text.split(':').length !== 2) throw new Error(`${label}: "${text}" must contain exactly one colon (min:max)`);
+  const [rawMin, rawMax] = text.split(':');
   const parseBound = (bound: string): number | undefined => {
     const cleaned = bound.trim().replace(/%$/, '').replace(/[$,]/g, '');
     if (cleaned === '') return undefined;
@@ -435,10 +436,10 @@ export function parseRange(raw: string, label: string): Range | undefined {
 function parseAumBound(bound: string): number | undefined {
   const cleaned = bound.trim().replace(/[$,]/g, '');
   if (cleaned === '') return undefined;
-  const suffixMatch = /^([\d.]+)([KMBT])$/i.exec(cleaned);
-  if (suffixMatch) return Number(suffixMatch[1]) * (AMOUNT_SUFFIXES[suffixMatch[2].toUpperCase()] ?? 1);
-  const value = Number(cleaned);
-  return Number.isFinite(value) ? value : undefined;
+  const suffixMatch = /^(\d+(?:\.\d+)?|\.\d+)([KMBT])$/i.exec(cleaned);
+  const value = suffixMatch ? Number(suffixMatch[1]) * (AMOUNT_SUFFIXES[suffixMatch[2].toUpperCase()] ?? 1) : Number(cleaned);
+  if (!Number.isFinite(value) || value < 0) throw new Error(`AUM: invalid bound "${bound.trim()}" (use a number with an optional K/M/B/T suffix)`);
+  return value;
 }
 
 export function parseAumRange(raw: string): (Range & { source?: string }) | undefined {
@@ -451,7 +452,8 @@ export function parseAumRange(raw: string): (Range & { source?: string }) | unde
   if (!text.includes(':')) {
     throw new Error(`AUM: "${text}" must use the "min:max" range syntax (a colon is required)`);
   }
-  const [rawMin, rawMax] = text.split(':', 2);
+  if (text.split(':').length !== 2) throw new Error(`AUM: "${text}" must contain exactly one colon (min:max)`);
+  const [rawMin, rawMax] = text.split(':');
   const min = parseAumBound(rawMin);
   const max = parseAumBound(rawMax);
   if (min === undefined && max === undefined) return undefined;
@@ -757,6 +759,7 @@ export type OfficialReturns = CatalogReturns & {
   asOfDate: string | null;
   mo1: number | null;
   mo3: number | null;
+  qtd?: number | null;
 };
 
 export type CatalogFund = {
@@ -856,8 +859,11 @@ export type ProductData = {
   marketPrice: number | null;
   marketPriceDate: string | null;
   premiumDiscountAmount: number | null;
+  premiumDiscountPercent?: number | null;
+  sharesOutstanding?: number | null;
   netAssets: number | null;
   netAssetsDate: string | null;
+  netAssetsKind?: string;
   bidAskSpread: number | null;
   dividendYield: number | null;
   dividendYieldDate: string | null;
@@ -1438,7 +1444,7 @@ export function priceReturns(days: ChartDay[], now = new Date(), coveredFrom: st
     cagr3y: anchored(year3) ? annualized(year3.adjClose, last.adjClose, 3) : null,
     cagr5y: anchored(year5) ? annualized(year5.adjClose, last.adjClose, 5) : null,
     cagr10y: anchored(year10) ? annualized(year10.adjClose, last.adjClose, 10) : null,
-    siAnn: siYears >= 0.75 && anchored(first) ? annualized(first.adjClose, last.adjClose, siYears) : null,
+    siAnn: siYears >= 1 && anchored(first) ? annualized(first.adjClose, last.adjClose, siYears) : null,
     mo1: anchored(mo1StartDay) ? pctChange(mo1StartDay.adjClose, last.adjClose) : null,
     qtd: anchored(qtdStartDay) ? pctChange(qtdStartDay.adjClose, last.adjClose) : null,
   };
@@ -1573,6 +1579,13 @@ export function samePublishedContent(previous: string, value: unknown): boolean 
   } catch { return false; }
 }
 
+/** Write through a temp file and rename, so a killed run never leaves a truncated JSON file. */
+async function atomicWrite(file: URL, text: string): Promise<void> {
+  const tmp = new URL(`${file.href}.tmp-${process.pid}`);
+  await writeFile(tmp, text, 'utf8');
+  await rename(tmp, file);
+}
+
 async function writeIfChanged(file: URL, value: unknown): Promise<boolean> {
   const next = `${JSON.stringify(value, null, 1)}\n`;
   let previous: string | null = null;
@@ -1582,7 +1595,7 @@ async function writeIfChanged(file: URL, value: unknown): Promise<boolean> {
     // First write.
   }
   if (previous === next || (previous !== null && samePublishedContent(previous, value))) return false;
-  await writeFile(file, next, 'utf8');
+  await atomicWrite(file, next);
   return true;
 }
 
@@ -1631,7 +1644,7 @@ async function removeStalePages(fundDir: URL, kind: 'holdings' | 'history', kept
   }
 }
 
-type UpdateState = { cursor: string | null; savedAt: string };
+type UpdateState = { cursor: string | null; savedAt: string; scope?: string };
 
 async function readUpdateState(): Promise<UpdateState | null> {
   try {
@@ -1641,11 +1654,25 @@ async function readUpdateState(): Promise<UpdateState | null> {
   }
 }
 
-async function writeUpdateState(lastProcessedTicker: string | null): Promise<void> {
-  if (!lastProcessedTicker) { await rm(STATE_FILE, { force: true }); return; }
-  const previous: UpdateState | null = await readUpdateState();
-  if (previous?.cursor === lastProcessedTicker) return;
-  await writeIfChanged(STATE_FILE, { cursor: lastProcessedTicker, savedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z') });
+/** The cursor is only valid for the filter set it was saved under. */
+export function cursorScope(config: UpdaterConfig): string {
+  return JSON.stringify({
+    tickers: [...config.tickers].sort(), aum: config.aumRange ?? null, ter: config.terRange ?? null, dy: config.dividendYieldRange ?? null,
+    sec: config.secYieldRange ?? null, perf: config.performanceRanges, tr: config.totalReturnRanges,
+  });
+}
+
+/** Bounded run: save the cursor with its scope. Unfiltered full pass: reset. Filtered full pass: leave the saved state alone. */
+async function writeUpdateState(lastProcessedTicker: string | null, config: UpdaterConfig): Promise<void> {
+  const scope = cursorScope(config);
+  if (config.maxFetches > 0) {
+    if (!lastProcessedTicker) return;
+    const previous: UpdateState | null = await readUpdateState();
+    if (previous?.cursor === lastProcessedTicker && previous.scope === scope) return;
+    await writeIfChanged(STATE_FILE, { scope, cursor: lastProcessedTicker, savedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z') });
+    return;
+  }
+  if (scope === cursorScope({ ...config, tickers: [], aumRange: undefined, terRange: undefined, dividendYieldRange: undefined, secYieldRange: undefined, performanceRanges: {}, totalReturnRanges: {} })) await rm(STATE_FILE, { force: true });
 }
 
 async function readPreviousIndex(): Promise<Map<string, JsonRecord>> {
@@ -1783,6 +1810,21 @@ export function parseIssuerCatalog(text: string): CatalogEntry[] {
         secYield: header ? numberOrNull(at(header.secYield)) : null,
         secYieldDate: header ? toIsoDate(at(header.yieldDate)) : null,
         frequency: header ? cleanText(at(header.frequency)) : '',
+      });
+    }
+  }
+  if (!funds.size) {
+    // The catalog is now a card listing, not a table: "PAPI", then "[name](url)", then "Market Price as of mm/dd/yyyy" and "$price".
+    const cardRe = /(?:^|\n)([A-Z0-9]{2,6})[ \t]*\n+\[([^\]\n]+)\]\((https?:[^)\s]+)\)(?:[ \t]*\n+Market Price as of (\d{1,2}\/\d{1,2}\/\d{4})[\s\S]{0,200}?\$([\d,.]+))?/g;
+    for (const match of source.matchAll(cardRe)) {
+      const ticker = sanitizeTicker(match[1]);
+      let fundPage: string;
+      try { const parsed = new URL(match[3], ISSUER_SITE); fundPage = `${parsed.origin}${parsed.pathname}`; } catch { continue; }
+      if (!ticker || funds.has(ticker) || !isParametricFundUrl(fundPage)) continue;
+      funds.set(ticker, {
+        ticker, name: cleanText(match[2]), fundPage, nav: null,
+        marketPrice: match[5] ? numberOrNull(match[5]) : null, asOfDate: match[4] ? toIsoDate(match[4]) : null,
+        secYield: null, secYieldDate: null, frequency: '',
       });
     }
   }
@@ -2133,6 +2175,109 @@ export function parseIssuerProduct(text: string, ticker: string): ProductData {
   };
 }
 
+// The product pages are rendered client side from the issuer's public JSON data
+// service (the markdown of the page carries only disclosures). The five files
+// below hold every fact the old page tables used to show.
+export const PARAMETRIC_PRODUCT_IDS: Record<string, string> = { PAPI: '100637', PHEQ: '100638', PEPS: '100678' };
+export const ISSUER_API_PARTS = ['detail/en-us-financial-advisor', 'detail/en-pricing', 'detail/en-returns', 'detail/en-yield', 'detail/en-distribution'] as const;
+export function issuerApiUrl(productId: string, part: string): string {
+  return `${ISSUER_SITE}/im/json/imwebdata/data/product/EF/${productId}/${part}.json`;
+}
+
+type ApiJson = Record<string, any>;
+const apiNumber = (value: unknown): number | null => numberOrNull(typeof value === 'string' ? value.trim() : value);
+const apiDate = (value: unknown): string | null => {
+  const iso = toIsoDate(String(value ?? '').replace(/-/g, '/').trim());
+  return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : null;
+};
+
+function apiReturnsRow(rows: ApiJson[], timeFrame: string, inception: string | null): OfficialReturns {
+  const row = rows.find((item) => item?.timeFrame === timeFrame && item?.perfType === 'NET');
+  const empty: OfficialReturns = { ...EMPTY_RETURNS, asOfDate: null, mo1: null, mo3: null };
+  if (!row) return empty;
+  const asOfDate = apiDate(row.perfAsOfDate);
+  return {
+    asOfDate,
+    mo1: apiNumber(row.oneMonth),
+    mo3: apiNumber(row.threeMonths),
+    qtd: apiNumber(row.qtd),
+    ytd: apiNumber(row.ytd),
+    yr1: apiNumber(row.oneYr),
+    yr3: apiNumber(row.threeYr),
+    yr5: apiNumber(row.fiveYr),
+    yr10: apiNumber(row.tenYr),
+    // An annualized figure over less than a year is not a meaningful since-inception rate.
+    sinceInception: annualizedSinceInception(apiNumber(row.si), inception, asOfDate),
+  };
+}
+
+/** Product facts from the issuer JSON service: detail, pricing, returns, yield and distribution files (already parsed JSON). */
+export function parseIssuerApi(files: { detail: ApiJson; pricing: ApiJson; returns: ApiJson; yields: ApiJson; distribution: ApiJson }, ticker: string): ProductData {
+  const detail = files.detail?.en ?? files.detail ?? {};
+  const shareClass = (detail.shareClasses ?? []).find((item: ApiJson) => String(item?.identifiers?.ticker ?? '').toUpperCase() === ticker.toUpperCase()) ?? (detail.shareClasses ?? [])[0] ?? {};
+  const ids = shareClass.identifiers ?? {};
+  const fees = shareClass.fees ?? {};
+  const benchmark = (shareClass.benchmarks ?? []).find((item: ApiJson) => item?.benchmarkSubType === 'P') ?? (shareClass.benchmarks ?? [])[0];
+  const inception = apiDate(detail.inceptionDate ?? shareClass.inceptionDate);
+  const pricing = files.pricing?.en?.shareClasses?.[0]?.currencies?.[0]?.pricings ?? {};
+  const returnRows: ApiJson[] = files.returns?.en?.shareClasses?.[0]?.currencies?.[0]?.performances ?? [];
+  const yieldBlock = files.yields?.en?.shareClasses?.[0]?.currencies?.[0]?.yield ?? {};
+  const distributions: ApiJson[] = files.distribution?.en?.shareClasses?.[0]?.distributions ?? [];
+  const dividends = distributions.flatMap((row) => {
+    const exDate = apiDate(row.exDistributionDate);
+    const epoch = exDate ? isoToEpoch(exDate) : null;
+    const amount = round((apiNumber(row.dividendPerShare) ?? 0) + (apiNumber(row.totalCapitalGainPerShare) ?? 0), 6);
+    if (!exDate || epoch === null || amount <= 0) return [];
+    return [{ epoch, amount, exDate, payDate: apiDate(row.payableDate) ?? '', recordDate: apiDate(row.recordDate) ?? '' }];
+  }).sort((a, b) => a.epoch - b.epoch);
+  const nav = apiNumber(pricing.nav4f ?? pricing.nav);
+  const navDate = apiDate(pricing.navAsOfDate);
+  const shares = apiNumber(pricing.outstandingShares);
+  const frequency = issuerFrequency(detail.distFrequency);
+  // The daily SEC yield is the freshest published one; the monthly figure is its fallback.
+  const dailySec = apiNumber(yieldBlock.dailySec30Yield);
+  const secYield = dailySec ?? apiNumber(yieldBlock.sec30Yield);
+  const secYieldDate = dailySec !== null ? apiDate(yieldBlock.dailyAsofDate) : apiDate(yieldBlock.thirtyDayAsofDate);
+  const monthEnd = apiReturnsRow(returnRows, 'MONTHLY', inception);
+  const quarterEnd = apiReturnsRow(returnRows, 'QUARTERLY', inception);
+  return {
+    ticker,
+    name: cleanText(detail.name) || ticker,
+    cusip: cleanText(ids.cusip || ''),
+    isin: cleanText(ids.isin || '').toUpperCase(),
+    exchange: cleanText(detail.exchange || ''),
+    assetClass: cleanText(detail.assetClassName || ''),
+    benchmark: cleanText(benchmark?.name || ''),
+    inception,
+    grossExpense: apiNumber(fees.grossExpenseRatio),
+    netExpense: apiNumber(fees.netExpenseRatio),
+    nav,
+    navDate,
+    marketPrice: apiNumber(pricing.marketPrice),
+    marketPriceDate: navDate,
+    premiumDiscountAmount: apiNumber(pricing.premiumDiscount),
+    premiumDiscountPercent: apiNumber(pricing.premiumDiscountPercentage),
+    sharesOutstanding: shares,
+    // The service publishes no net assets figure: shares outstanding x NAV, both as of the NAV date.
+    netAssets: shares !== null && nav !== null ? round(shares * nav, 2) : null,
+    netAssetsDate: navDate,
+    netAssetsKind: 'derived: shares outstanding x NAV (the issuer publishes no net assets figure)',
+    bidAskSpread: apiNumber(pricing.medianBid),
+    dividendYield: null,
+    dividendYieldDate: null,
+    dividendYieldKind: '',
+    secYield,
+    secYieldDate,
+    secYieldKind: '',
+    frequencyCode: frequency.code,
+    latestDividend: dividends.length ? dividends[dividends.length - 1] : null,
+    monthEnd,
+    quarterEnd,
+    dividends,
+    holdings: null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Fund assembly
 // ---------------------------------------------------------------------------
@@ -2200,6 +2345,17 @@ export function annualizedSinceInception(value: number | null, inception: string
   return (end - start) / 86_400 >= 365 ? value : null;
 }
 
+/** Without this run's issuer facts a published fund is kept as it was; a fund never published before may proceed (derived basis). */
+export function issuerGate(product: ProductData | null, hasPublished: boolean, skipIssuer: boolean): 'proceed' | 'skip' | 'fail' {
+  if (product || !hasPublished) return 'proceed';
+  return skipIssuer ? 'skip' : 'fail';
+}
+
+/** Official returns are only ever the ones read from the issuer in this run, never older published values. */
+export function officialReturnsFor(product: ProductData | null): CatalogReturns {
+  return mergeOfficial(product?.monthEnd ?? null, null);
+}
+
 function mergeOfficial(primary: CatalogReturns | null, secondary: CatalogReturns | null): CatalogReturns {
   const pick = (key: keyof CatalogReturns): number | null => primary?.[key] ?? secondary?.[key] ?? null;
   return { ytd: pick('ytd'), yr1: pick('yr1'), yr3: pick('yr3'), yr5: pick('yr5'), yr10: pick('yr10'), sinceInception: pick('sinceInception') };
@@ -2211,13 +2367,16 @@ function returnsBlock(
   officialMo1: number | null,
   asOfDate: string | null,
   previous: JsonRecord,
+  issuer: { qtd: number | null; quarterEnd: OfficialReturns | null } | null = null,
 ): JsonRecord | null {
   const hasOfficial = Object.values(official).some((value) => value !== null);
   const hasDerived = Boolean(derived.asOfDate);
   if (!hasOfficial && !hasDerived) return (previous.returns as JsonRecord) ?? null;
   const text = (value: number | null | undefined): string => (value === null || value === undefined ? '—' : `${value.toFixed(2)}%`);
   const asOf = asOfDate || derived.asOfDate;
-  const mo1 = officialMo1 ?? derived.mo1;
+  // With the issuer table in hand, 1-month and quarter-to-date are the table's own figures (an honest null stays null).
+  const mo1 = issuer ? officialMo1 : (officialMo1 ?? derived.mo1);
+  const qtd = issuer ? issuer.qtd : derived.qtd;
   return {
     derivedFrom: hasOfficial
       ? 'official Eaton Vance / MSIM published returns; month-to-date and history-derived periods use the Yahoo Finance adjusted series'
@@ -2226,8 +2385,8 @@ function returnsBlock(
       asOfDate: asOf ? formatEdgarDate(asOf) : '—',
       mo1,
       mo1Text: text(mo1),
-      qtd: derived.qtd,
-      qtdText: text(derived.qtd),
+      qtd,
+      qtdText: text(qtd),
       ytd: official.ytd ?? derived.ytd,
       ytdText: text(official.ytd ?? derived.ytd),
       yr1: official.yr1 ?? derived.yr1,
@@ -2241,10 +2400,15 @@ function returnsBlock(
       sinceInception: official.sinceInception ?? derived.siAnn,
       sinceInceptionText: text(official.sinceInception ?? derived.siAnn),
     },
-    quarterEnd: {
-      asOfDate: formatEdgarDate(lastCompletedQuarterEnd().toISOString().slice(0, 10)),
-      ytd: null, yr1: null, yr3: null, yr5: null, yr10: null, sinceInception: null,
-    },
+    quarterEnd: issuer?.quarterEnd
+      ? {
+        asOfDate: issuer.quarterEnd.asOfDate ? formatEdgarDate(issuer.quarterEnd.asOfDate) : formatEdgarDate(lastCompletedQuarterEnd().toISOString().slice(0, 10)),
+        ytd: issuer.quarterEnd.ytd, yr1: issuer.quarterEnd.yr1, yr3: issuer.quarterEnd.yr3, yr5: issuer.quarterEnd.yr5, yr10: issuer.quarterEnd.yr10, sinceInception: issuer.quarterEnd.sinceInception,
+      }
+      : {
+        asOfDate: formatEdgarDate(lastCompletedQuarterEnd().toISOString().slice(0, 10)),
+        ytd: null, yr1: null, yr3: null, yr5: null, yr10: null, sinceInception: null,
+      },
   };
 }
 
@@ -2376,6 +2540,23 @@ export function nportBelongsToFund(parsed: { seriesId: string; seriesName: strin
   return Boolean(filed && wanted && (filed === wanted || filed.includes(wanted) || wanted.includes(filed)));
 }
 
+/** Reads the five issuer JSON files of one fund (direct, then through the rendering proxy). Any failed file fails the whole read. */
+export async function loadIssuerApi(productId: string, ticker: string, config: UpdaterConfig): Promise<ProductData> {
+  const names = ['detail', 'pricing', 'returns', 'yields', 'distribution'] as const;
+  const loaded: Record<string, ApiJson> = {};
+  for (const [index, part] of ISSUER_API_PARTS.entries()) {
+    const text = await fetchIssuerText(issuerApiUrl(productId, part), `[ product  ] ${ticker} ${part.replace('detail/', '')}`, config);
+    try {
+      loaded[names[index]] = JSON.parse(proxyPayload(text, 'json')) as ApiJson;
+    } catch {
+      throw new Error(`${ticker}: ${part} is not JSON`);
+    }
+  }
+  const product = parseIssuerApi(loaded as { detail: ApiJson; pricing: ApiJson; returns: ApiJson; yields: ApiJson; distribution: ApiJson }, ticker);
+  if (product.nav === null || product.marketPrice === null) throw new Error(`${ticker}: issuer pricing file carries no NAV or market price`);
+  return product;
+}
+
 async function loadIssuerHoldings(fund: CatalogFund, pageText: string, config: UpdaterConfig): Promise<ParsedHoldings | null> {
   const url = holdingsDownloadUrl(pageText, fund.ticker);
   if (!url) return null;
@@ -2473,15 +2654,32 @@ async function processFund(
   let product: ProductData | null = null;
   let pageText = '';
   if (!config.skipIssuer) {
-    const pageUrl = PARAMETRIC_FUND_SLUGS[ticker] ? issuerFundUrl(ticker) : fund.fundPage;
-    try {
-      pageText = await fetchIssuerText(pageUrl, `[ product  ] ${ticker}`, config);
-      product = parseIssuerProduct(pageText, ticker);
-      if (config.storeRawDownloads) await storeRaw(ticker, 'product.md', pageText);
-    } catch (error) {
-      outputNote(`[ product  ] ${ticker}: ${errorMessage(error)} — keeping published data`);
+    const productId = PARAMETRIC_PRODUCT_IDS[ticker];
+    if (productId) {
+      try {
+        product = await loadIssuerApi(productId, ticker, config);
+      } catch (error) {
+        outputNote(`[ product  ] ${ticker}: ${errorMessage(error)}`);
+      }
+    }
+    if (!product) {
+      const pageUrl = PARAMETRIC_FUND_SLUGS[ticker] ? issuerFundUrl(ticker) : fund.fundPage;
+      try {
+        pageText = await fetchIssuerText(pageUrl, `[ product  ] ${ticker}`, config);
+        const parsed = parseIssuerProduct(pageText, ticker);
+        // The rendered page carries facts only when its tables are present; a page of disclosures alone is a failed read.
+        product = parsed.nav !== null || parsed.netExpense !== null || parsed.netAssets !== null ? parsed : null;
+        if (config.storeRawDownloads) await storeRaw(ticker, 'product.md', pageText);
+      } catch (error) {
+        outputNote(`[ product  ] ${ticker}: ${errorMessage(error)}`);
+      }
     }
   }
+  // Every fund is either fully refreshed or fully kept: without the issuer facts a published fund stays exactly as it was
+  // (never a derived return next to an official label, never new prices next to stale returns).
+  const gate = issuerGate(product, Object.keys(previousMeta).length > 0, config.skipIssuer);
+  if (gate === 'skip') return null;
+  if (gate === 'fail') throw new Error('issuer data unavailable - kept the published fund unchanged');
   const officialHoldings = pageText ? await loadIssuerHoldings(fund, pageText, config) : null;
   if (officialHoldings && product) product.holdings = officialHoldings;
   const cusip = product?.cusip || fund.cusip || String(previous.identifiers?.cusip || '');
@@ -2584,14 +2782,16 @@ async function processFund(
 
   // 5) Headline numbers, official first, published values retained otherwise.
   const inception = product?.inception ?? fund.inception ?? null;
-  const returnsAsOfDate = product?.monthEnd.asOfDate ?? fund.returnsAsOfDate ?? null;
-  const official = mergeOfficial(product?.monthEnd ?? null, fund.returns);
+  const returnsAsOfDate = product?.monthEnd.asOfDate ?? null;
+  const official = officialReturnsFor(product);
   const officialCumulative = product?.quarterEnd ? { ...EMPTY_CUMULATIVE } : null;
-  const ter = product?.netExpense ?? product?.grossExpense ?? fund.ter ?? numberOrNull(previous.terValue);
-  const nav = product?.nav ?? fund.nav ?? numberOrNull(previous.navValue);
-  const price = product?.marketPrice ?? fund.close ?? chart?.regularMarketPrice ?? numberOrNull(previous.closePriceValue);
-  const secYield = product?.secYield ?? fund.secYield ?? null;
-  const secYieldDate = product?.secYieldDate ?? fund.secYieldDate ?? null;
+  // With the issuer facts in hand a missing figure is an honest null, never an older published one.
+  const ter = product ? (product.netExpense ?? product.grossExpense) : (fund.ter ?? null);
+  const terGross = product ? (product.grossExpense ?? product.netExpense) : null;
+  const nav = product ? product.nav : (fund.nav ?? null);
+  const price = product?.marketPrice ?? fund.close ?? chart?.regularMarketPrice ?? null;
+  const secYield = product ? product.secYield : (fund.secYield ?? null);
+  const secYieldDate = product ? product.secYieldDate : (fund.secYieldDate ?? null);
   const metrics = deriveCatalogMetrics(
     official,
     derived,
@@ -2618,14 +2818,15 @@ async function processFund(
   // feeds publish a percentage, so it is computed from the page's own NAV and
   // market price (and the published dollar figure is kept alongside).
   const premiumDiscountAmount = product?.premiumDiscountAmount ?? fund.premiumDiscountAmount ?? null;
-  const premiumDiscount = nav && price ? round(((price - nav) / nav) * 100, 2) : fund.premiumDiscount ?? null;
+  const premiumDiscount = nav && price ? round(((price - nav) / nav) * 100, 2) : (product ? null : fund.premiumDiscount ?? null);
   const nportNetAssets = holdingsEdgar
     ? holdingsEdgar.netAssets ?? (holdingsEdgar.totalValue ? round(holdingsEdgar.totalValue, 2) : null)
     : null;
-  const catalogNetAssets = product?.netAssets ?? (fund.source === 'parametric' ? fund.netAssets : null);
-  const netAssets = catalogNetAssets ?? nportNetAssets ?? fund.netAssets ?? numberOrNull(previous.aumValue);
+  const catalogNetAssets = product?.netAssets ?? null;
+  const netAssets = catalogNetAssets ?? nportNetAssets ?? (product ? null : (fund.netAssets ?? null));
+  const aumDate = catalogNetAssets !== null ? (product?.netAssetsDate ?? null) : (nportNetAssets !== null ? (holdingsEdgar?.repPdDate || null) : null);
   const navAsOfDate = product?.navDate ?? (chart?.regularMarketTime ? epochToIsoDate(chart.regularMarketTime) : fund.asOfDate ?? null);
-  const returnsData = returnsBlock(derived, official, product?.monthEnd.mo1 ?? fund.mo1 ?? null, returnsAsOfDate, previous);
+  const returnsData = returnsBlock(derived, official, product ? product.monthEnd.mo1 : (fund.mo1 ?? null), returnsAsOfDate, previous, product ? { qtd: product.monthEnd.qtd ?? null, quarterEnd: product.quarterEnd } : null);
   const asOfLabel = navAsOfDate ? formatEdgarDate(navAsOfDate) : String(previous.asOfDate ?? '—');
   const category = product?.assetClass && product.assetClass !== 'ETF' ? product.assetClass : fund.category;
   const benchmark = product?.benchmark || holdingsEdgar?.designatedIndex || fund.benchmark;
@@ -2644,7 +2845,7 @@ async function processFund(
       yahooChart: `${YAHOO_CHART_URL}/${encodeURIComponent(ticker)}`,
       holdingsSource,
       historySource,
-      provider: 'Eaton Vance / MSIM product pages + SEC EDGAR Form N-PORT-P (holdings) + Yahoo Finance public chart API (NAV history and dividends)',
+      provider: 'Eaton Vance / MSIM product data service (www.eatonvance.com/im/json/imwebdata) + SEC EDGAR Form N-PORT-P (holdings) + Yahoo Finance public chart API (NAV history and dividends)',
     },
     identifiers: { cusip: cusip || null, isin: product?.isin || fund.isin || null, indexTicker: benchmark || null },
     inception: {
@@ -2653,52 +2854,48 @@ async function processFund(
       listingDate: null,
     },
     expense: {
-      gross: product?.grossExpense ?? ter,
-      net: product?.netExpense ?? ter,
+      gross: terGross,
+      net: ter,
       display: ter === null ? '—' : `${ter.toFixed(2)}%`,
       grossDisplay: product?.grossExpense === null || product?.grossExpense === undefined ? null : `${product.grossExpense.toFixed(2)}%`,
       netDisplay: product?.netExpense === null || product?.netExpense === undefined ? null : `${product.netExpense.toFixed(2)}%`,
       asOf: asOfLabel,
-      source: 'official Eaton Vance / MSIM product page (gross and net expense ratio)',
+      source: 'official Eaton Vance / MSIM product data (net and gross expense ratio; terValue is the net ratio)',
     },
     nav: {
       display: nav === null ? '—' : `$${nav.toFixed(2)}`,
       value: nav,
       asOfDate: navAsOfDate,
-      source: product ? 'official Eaton Vance / MSIM product page' : 'previous run',
+      source: product ? 'official Eaton Vance / MSIM product data (pricing)' : 'not available',
     },
     marketPrice: {
       display: price === null ? '—' : `$${price.toFixed(2)}`,
       value: price,
       asOfDate: navAsOfDate,
-      source: product ? 'official Eaton Vance / MSIM product page (market price)' : 'Yahoo Finance chart API (last close)',
+      source: product ? 'official Eaton Vance / MSIM product data (market price)' : 'Yahoo Finance chart API (last close)',
     },
     premiumDiscount: {
       display: premiumDiscount === null ? '—' : `${premiumDiscount.toFixed(2)}%`,
       value: premiumDiscount,
       asOfDate: navAsOfDate,
-      source: product ? 'official Eaton Vance / MSIM product page (market price versus NAV)' : 'previous run',
+      source: product ? 'official Eaton Vance / MSIM product data (premium/discount percentage)' : 'previous run',
       amount: premiumDiscountAmount,
     },
     bidAskSpread: {
       display: product?.bidAskSpread === null || product?.bidAskSpread === undefined ? '—' : `${product.bidAskSpread.toFixed(2)}%`,
       value: product?.bidAskSpread ?? null,
       asOfDate: navAsOfDate,
-      source: 'official Eaton Vance / MSIM product page (30-day median bid/ask spread)',
+      source: 'official Eaton Vance / MSIM product data (median bid/ask spread)',
     },
     aum: {
       display: netAssets === null ? '—' : `$${(netAssets / 1e6).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} M`,
       value: netAssets,
-      asOfDate: product?.netAssetsDate
-        ? formatEdgarDate(product.netAssetsDate)
-        : holdingsEdgar?.repPdDate
-          ? formatEdgarDate(holdingsEdgar.repPdDate)
-          : ((previous.aum as JsonRecord)?.asOfDate as string) ?? '—',
+      asOfDate: aumDate ? formatEdgarDate(aumDate) : '—',
       source: catalogNetAssets !== null
-        ? 'official Eaton Vance / MSIM product page (total net assets)'
+        ? (product?.netAssetsKind || 'official Eaton Vance / MSIM product page (total net assets)')
         : nportNetAssets !== null
-          ? `SEC Form N-PORT-P net assets (report period ${holdingsEdgar?.repPdDate || 'n/a'})`
-          : 'previous run',
+          ? `SEC Form N-PORT-P net assets (report period ${holdingsEdgar?.repPdDate || 'n/a'}; older than the NAV date)`
+          : 'not available',
     },
     yields: {
       dividendYield: metrics.dividendYield,
@@ -2733,7 +2930,7 @@ async function processFund(
       source: historySource,
     },
   };
-  await writeIfChanged(new URL('meta.json', fundDir), retainUnavailable(meta, previousMeta));
+  await writeIfChanged(new URL('meta.json', fundDir), meta);
 
   const monthEnd = ((returnsData as JsonRecord)?.monthEnd as JsonRecord) || {};
   return {
@@ -2748,12 +2945,15 @@ async function processFund(
     exchange,
     ter: ter === null ? '—' : `${ter}%`,
     terValue: ter,
+    terGross: terGross === null ? '—' : `${terGross}%`,
+    terGrossValue: terGross,
     nav: nav === null ? '—' : `$${nav.toFixed(2)}`,
     navValue: nav,
     aum: netAssets === null ? '—' : formatAumDisplay(netAssets),
     aumValue: netAssets,
+    aumAsOfDate: aumDate ? formatEdgarDate(aumDate) : '—',
     asOfDate: asOfLabel,
-    inceptionDate: inception ? formatEdgarDate(inception) : (previous.inceptionDate || '—'),
+    inceptionDate: inception ? formatEdgarDate(inception) : '—',
     closePrice: price === null ? '—' : `$${price.toFixed(2)}`,
     closePriceValue: price,
     premiumDiscount: premiumDiscount === null ? '—' : `${premiumDiscount.toFixed(2)}%`,
@@ -2763,7 +2963,7 @@ async function processFund(
       exDate: latestDividend ? formatUsDate(latestDividend.epoch) : '—',
       dividend: latestDividend ? String(round(latestDividend.amount, 6)) : '—',
     },
-    returns: { monthEnd, quarterEnd: null },
+    returns: { monthEnd, quarterEnd: ((returnsData as JsonRecord)?.quarterEnd as JsonRecord) ?? null },
     metrics,
     holdings: holdingsCount,
     history: history.length,
@@ -2948,6 +3148,11 @@ async function main(): Promise<void> {
   const unknown = config.tickers.filter(ticker => !catalog.has(ticker));
   if (unknown.length) throw new Error(`Requested tickers absent from catalog: ${unknown.join(' ')}`);
   const universe = [...catalog.values()].sort((a, b) => (a.ticker < b.ticker ? -1 : a.ticker > b.ticker ? 1 : 0));
+  const newFunds = previousIndex.size ? universe.filter((fund) => !previousIndex.has(fund.ticker)).map((fund) => fund.ticker) : [];
+  if (newFunds.length) {
+    console.log(`NEW FUNDS: ${newFunds.join(', ')}`);
+    if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `### NEW FUNDS\n\n${newFunds.join(', ')}\n`, 'utf8');
+  }
   if (!universe.length) throw new Error('No verified issuer catalog or published seed available');
   console.log(`[ catalog  ] ${universe.length} Parametric ETFs (${catalogSource})`);
 
@@ -2955,7 +3160,7 @@ async function main(): Promise<void> {
   // A plain `bun ./scripts/update-data.ts` (no MAX_FETCHES) always walks the
   // whole catalog from the top and clears the cursor afterwards; the saved
   // cursor only rotates the queue for explicitly bounded batch runs.
-  const cursor = config.maxFetches > 0 ? state?.cursor || null : null;
+  const cursor = config.maxFetches > 0 && state?.scope === cursorScope(config) ? state.cursor || null : null;
   const selected = batchSelection(universe, config, cursor);
   const results: JsonRecord[] = [];
   const succeeded = new Set<string>();
@@ -2963,12 +3168,15 @@ async function main(): Promise<void> {
 
   outputPrintFilter(selected.length, universe.length, outputHasOutputFilters(config));
   const output = outputCreateReporter(API_ROOT, selected.length);
+  // Soft deadline: stop taking new funds after 25 minutes so the index is still written before the 30 minute job limit.
+  const deadline = Date.now() + 25 * 60_000;
   await runPool(selected, config.concurrency, requestSleepMs, async (fund) => {
+    if (Date.now() > deadline) return;
     const before = await output.before(fund.ticker);
     try {
       const row = await processFund(fund, config, previousIndex.get(fund.ticker) || {});
       if (row) {
-        results.push(retainUnavailable(row, previousIndex.get(fund.ticker)) as JsonRecord);
+        results.push(row);
         succeeded.add(fund.ticker);
       }
       await output.result(fund.ticker, before, row ? undefined : 'skipped');
@@ -3005,7 +3213,7 @@ async function main(): Promise<void> {
   });
 
   // Full passes reset the cursor: the next run starts from the top again.
-  await writeUpdateState(config.maxFetches > 0 ? lastProcessedTicker : null);
+  await writeUpdateState(lastProcessedTicker, config);
 
   console.log('');
   console.log(`[ done     ] ${results.length} funds updated, ${keptFromPrevious.length} kept from previous runs, ${failures} failures`);
@@ -3014,7 +3222,7 @@ async function main(): Promise<void> {
     `[ cursor   ] ${config.maxFetches > 0 && lastProcessedTicker ? `next run continues after ${lastProcessedTicker}` : 'full pass complete (cursor reset)'}`,
   );
 
-  if (failures) process.exitCode = 1;
+  if (failures && failures === selected.length) process.exitCode = 1;
   if (process.env.GITHUB_STEP_SUMMARY) {
     await appendFile(
       process.env.GITHUB_STEP_SUMMARY,

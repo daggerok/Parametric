@@ -29,8 +29,8 @@ The **Update Parametric ETF data** workflow runs weekly and on demand. It expose
 | Block | Source |
 | --- | --- |
 | Catalog (the Parametric ETF suite) | [eatonvance.com ETFs](https://www.eatonvance.com/products/etfs.html), the shared MSIM product table filtered to the `/products/etfs/**/parametric-*` fund pages |
-| Fund facts per fund | the fund's own product page, e.g. [PAPI](https://www.eatonvance.com/products/etfs/us-equity/parametric-equity-premium-income-etf.html): NAV, market price, premium/discount, 30-day median bid/ask spread, gross/net expense ratio, inception, exchange, benchmark, total net assets, distribution frequency |
-| Returns and distributions | the `Returns`, `Distributions` and `Key Facts & Characteristics` tables of the same product page |
+| Fund facts per fund | the issuer's public JSON data service that renders the product page (e.g. [PAPI](https://www.eatonvance.com/products/etfs/us-equity/parametric-equity-premium-income-etf.html) = product `100637`, files `detail`, `en-pricing`, `en-returns`, `en-yield`, `en-distribution` under `/im/json/imwebdata/data/product/EF/<id>/`): ISIN, CUSIP, inception, gross/net expense ratio, NAV, market price, premium/discount, median bid/ask spread, shares outstanding, exchange, benchmark, distribution frequency. The page itself no longer carries these tables in its markdown; the product ids live in `PARAMETRIC_PRODUCT_IDS` |
+| Returns, yields and distributions | the same service: month-end and quarter-end NAV returns (`NET` rows), 30-day SEC yield (daily figure when published, else the monthly one), and the distribution schedule |
 | Holdings per fund | the issuer's full-holdings download when the page links one; otherwise [SEC EDGAR Form N-PORT-P](https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001676326&type=NPORT-P) for Morgan Stanley ETF Trust (CIK `0001676326`), resolved through the fund's own series id |
 | Daily history | [Yahoo Finance chart API](https://query1.finance.yahoo.com/v8/finance/chart/PAPI) (`period1`/`period2`, daily bars, dividends) |
 | Fallback | published `api/parametric/**` data is retained when a provider is unreachable; nothing is deleted on failure |
@@ -52,14 +52,14 @@ Each fund carries a derived `metrics` object that powers the catalog columns sha
 
 Caveats:
 
-- Official figures win: returns, expense ratios, NAV, market price and total net assets come from the issuer's product page. Where the page publishes no figure (young funds have no 3Y/5Y/10Y), returns are derived from the Yahoo adjusted series and labelled as estimates in `returnsBasis`; derived values never replace a published one. The market-price returns row is parsed separately and is not used for the NAV metrics
+- Official figures win: returns, expense ratios, NAV and market price come from the issuer's data service in the same run. `terValue` is the net expense ratio, `terGrossValue` the gross one. The issuer publishes no net assets figure, so `aumValue` is shares outstanding x NAV, dated with the NAV (`aumAsOfDate`, `meta.aum.source`); only when that is unavailable is the SEC N-PORT-P figure used, labelled with its older report date. Where the page publishes no figure (young funds have no 3Y/5Y/10Y), returns are derived from the Yahoo adjusted series and labelled as estimates in `returnsBasis`; derived values never replace a published one. The market-price returns row is parsed separately and is not used for the NAV metrics
 - The page publishes the premium/discount in dollars; the percentage is computed from the page's own NAV and market price, and the dollar figure is kept alongside
 - As-of dates and sources are recorded per block in each fund's `meta.json` (`nav.asOfDate`, `aum.asOfDate`, `holdings.asOfDate`, `*.source`)
-- An unavailable value is `null` or `—`, never `0`; a failed provider keeps the previously published value. An active filter range excludes funds whose value is unavailable
+- An unavailable value is `null` or `—`, never `0`; an honest null from a successful read stays null, but when the issuer data cannot be read a published fund is kept exactly as it was (every fund is fully updated or fully kept, so a derived return is never relabelled official, and `returnsBasis`/`performanceAsOf` always travel with the returns they describe). An active filter range excludes funds whose value is unavailable
 - Holdings tickers: issuer and N-PORT-P rows of bonds, repos, futures, options and other non-equity securities keep an empty ticker, because issuer codes would collide across funds in the Watchlist. N-PORT-P positions carry no ticker, so it is filled from the SEC company ticker table by issuer name, otherwise it stays `-`
 - Holdings layout: the product page lists only the top ten positions, so the full sheet is the issuer's CSV when the page links one, otherwise the fund's own N-PORT-P filing (series ids `S000082252` PAPI, `S000082250` PHEQ, `S000088098` PEPS); a filing of another series is rejected. N-PORT-P weights are already percent of net assets and are kept as filed, without forcing them to sum to 100%
 - Distributions: the issuer's published schedule (net investment income plus capital gains) wins; Yahoo dividends fill the gaps; zero or blank rows are skipped
-- A bounded run (`MAX_FETCHES` above 0) resumes after the cursor saved in `api/parametric/update-state.json`; a full pass clears it. Funds that are not selected or fail keep their previously published data
+- A bounded run (`MAX_FETCHES` above 0) resumes after the cursor saved in `api/parametric/update-state.json` (only funds that pass the filters count, it wraps around and is valid only for the filter set it was saved under); an unfiltered full pass clears it, a filtered run never touches it. The run stops taking new funds after 25 minutes and still writes the index; the exit code is non-zero only when every selected fund failed. Funds that are not selected or fail keep their previously published data
 
 ### Update controls
 
@@ -69,7 +69,7 @@ Caveats:
 | `REQUEST_SLEEP` | `3` | Minimum delay in seconds between direct request starts within each worker lane, including retries. Proxy requests ignore it and use the global 3.2 s proxy gate |
 | `CONCURRENCY` | `1` | Fund workers (integer >= 1). Direct requests are paced per worker, so N workers give about N times the throughput. Once issuer or SEC traffic switches to the r.jina.ai rendering proxy, all proxy request starts share one global gate (minimum 3.2 s apart, whatever REQUEST_SLEEP or CONCURRENCY say) and a proxy request is retried at most once |
 | `TICKERS` | all | Space-, comma- or semicolon-separated ticker allowlist, applied before `MAX_FETCHES` |
-| `AUM` | `:` | Net assets range `min:max`; bounds are USD amounts with optional `K`/`M`/`B`/`T`, or a preset `nano`, `micro`, `small`, `mid`, `large` |
+| `AUM` | `:` | Net assets range `min:max`; bounds are USD amounts with optional `K`/`M`/`B`/`T`, or a preset `nano`, `micro`, `small`, `mid`, `large`; a bad bound or more than one colon is an error |
 | `TER` | `:` | Expense ratio range in percent, strict `min:max` |
 | `DIVIDEND_YIELD` | `:` | Indicated dividend yield range in percent |
 | `SEC_YIELD` | `:` | Published 30-day SEC yield range in percent |
