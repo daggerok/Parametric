@@ -67,6 +67,14 @@ Each fund carries a derived `metrics` object that powers the catalog columns sha
 - `tr3y` / `tr5y` / `tr10y` - cumulative 3Y/5Y/10Y figures `(1 + CAGR)^n - 1` -> *TR 3Y/5Y/10Y*
 - `siAnn` - since-inception annualized -> *SI Ann.*
 - `dividendYield` - indicated yield (latest distribution x payments per year / market price), an estimate
+- `dividendYieldBasis` - short code of the definition behind `dividendYield`, `null` exactly when the yield is `null`; it is stored in `meta.yields.dividendYieldBasis` next to the yield, so a retained fund never pairs a new yield with an old code:
+
+  | Code | Meaning for Parametric |
+  | --- | --- |
+  | `indicated` | latest distribution x payments per year / market price; the only code produced today, the issuer publishes no dividend yield |
+  | `official-other` | a yield published by the issuer (not published today); its definition is not documented |
+  | `official-trailing-12m`, `official-distribution-rate`, `computed-trailing-12m` | part of the shared vocabulary, not used by this brand |
+
 - `secYield` - 30-day SEC yield when the catalog publishes it
 - `returnsBasis` - mandatory non-empty label of how the returns were computed: `official Eaton Vance / MSIM month-end NAV returns (fund detail page)`, `derived from the Yahoo Finance adjusted daily series, not official NAV returns`, or a `mixed: ...` text when official figures are completed with Yahoo-derived estimates for the periods the issuer does not publish
 - `performanceAsOf` - mandatory ISO `YYYY-MM-DD` date the returns are as of: the "As of" date of the issuer's Returns table when the figures are official (not the NAV date), or the last Yahoo close date when they are derived; `null` only when truly unknown. Both fields are the last two keys of `metrics` and are repeated in `returns` of each fund's `meta.json`

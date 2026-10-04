@@ -687,6 +687,25 @@ describe('metrics', () => {
     }
   });
 
+  test('dividendYieldBasis is the code of the yield source and null exactly when the yield is null', () => {
+    const indicated = deriveCatalogMetrics(official, derived, null, null, 0.176725, 12, 26.28, null, '2026-09-30');
+    expect(indicated).toMatchObject({ dividendYieldBasis: 'indicated' });
+    const published = deriveCatalogMetrics(official, derived, 8.5, null, 0.176725, 12, 26.28, null, '2026-09-30');
+    expect(published).toMatchObject({ dividendYield: 8.5, dividendYieldBasis: 'official-other' });
+    const none = deriveCatalogMetrics(NO_RETURNS, NO_DERIVED, null, null, null, null, null);
+    expect(none).toMatchObject({ dividendYield: null, dividendYieldBasis: null });
+    // rebuilt from meta: the stored code wins, legacy kind text maps to a code, and no yield means no code
+    const rebuild = (yields: any) => indexRowFromMeta({ ticker: 'T', yields }).metrics as any;
+    expect(rebuild({ dividendYield: 8.07, dividendYieldBasis: 'official-trailing-12m' }).dividendYieldBasis).toBe('official-trailing-12m');
+    expect(rebuild({ dividendYield: 8.07, dividendYieldKind: 'indicated (latest distribution x payments per year / market price)' }).dividendYieldBasis).toBe('indicated');
+    expect(rebuild({ dividendYield: 8.07, dividendYieldKind: 'Something the issuer says' }).dividendYieldBasis).toBe('official-other');
+    expect(rebuild({ dividendYield: null, dividendYieldBasis: 'indicated' }).dividendYieldBasis).toBeNull();
+    // fresh, rebuilt and bare (no meta data) rows carry the same metrics key set
+    const keys = Object.keys(indicated).sort();
+    for (const metrics of [published, none, rebuild({}), rebuild({ dividendYield: 1 }), indexRowFromMeta({ ticker: 'BARE' }).metrics]) expect(Object.keys(metrics).sort()).toEqual(keys);
+    expect(keys).toContain('dividendYieldBasis');
+  });
+
   test('official returns win, derived ones only fill gaps, and the basis says which', () => {
     const metrics = deriveCatalogMetrics(official, derived, null, null, 0.176725, 12, 26.28, null, '2026-09-30');
     expect(metrics).toMatchObject({ ytd: 7.63, tr1y: 9.0, cagr3y: 9.9, siAnn: 9.4, performanceAsOf: '2026-09-30' });
