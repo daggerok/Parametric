@@ -15,7 +15,7 @@ import {
   parseIssuerDistributions, parseIssuerProduct, parseIssuerReturnsTable, parseKeyFacts, parseNport, parseNportAccessions, parseRange,
   parseTopHoldings, pickEftsCik, priceReturns, proxyPayload, readConfig, resolveControls, runPool, runtimeControls, totalToAnnualized,
   edgarSeriesFilingsUrl, filingDocumentUrl, nportQuarterReturns, parseProspectusFacts, parseSubmissionDocuments, resetRunState, runFailed, runHealth,
-  sourceGate, withRequestLane,
+  sourceGate, withRequestLane, ISSUER_UA, indexRowFromMeta, retainIssuerSections,
 } from './update-data';
 
 const ROOT = new URL('../', import.meta.url);
@@ -764,6 +764,8 @@ globalThis.fetch = async (input) => {
   if (process.env.MOCK_ISSUER_DENIED === '1' && /eatonvance\\.com/.test(url)) return new Response('Access Denied', { status: 403 });
   for (const [part, body] of fixtures.sec) if (url.includes(part)) return new Response(body);
   const api = /\\/EF\\/\\d+\\/detail\\/(en-[a-z-]+)\\.json/.exec(url);
+  const override = JSON.parse(process.env.MOCK_API || '{}');
+  if (api && api[1] in override) return new Response(typeof override[api[1]] === 'string' ? override[api[1]] : JSON.stringify(override[api[1]]));
   if (api) return new Response(JSON.stringify(fixtures.api[api[1]]));
   if (url === fixtures.catalogUrl) return new Response(fixtures.catalog);
   return new Response('not mocked: ' + url, { status: 404 });
@@ -772,7 +774,7 @@ globalThis.fetch = async (input) => {
 
 type Sandbox = {
   dir: string;
-  run: (env?: Record<string, string>, fail?: string[]) => { exitCode: number; stderr: string };
+  run: (env?: Record<string, string>, fail?: string[]) => { exitCode: number; stderr: string; stdout: string };
   files: () => Record<string, string>;
   freeze: () => void; // backdates every published file so that any later write shows up in rewritten()
   rewritten: () => string[];
@@ -831,7 +833,7 @@ function withSandbox(body: (box: Sandbox) => void): void {
           REQUEST_SLEEP: '0', MAX_RETRIES: '1', CONCURRENCY: '2', EDGAR_FALLBACK: 'false', USE_SYSTEM_CA: 'false', ...env,
         },
       });
-      return { exitCode: result.exitCode ?? -1, stderr: result.stderr.toString() };
+      return { exitCode: result.exitCode ?? -1, stderr: result.stderr.toString(), stdout: result.stdout.toString() };
     };
     body({ dir, run, files, freeze, rewritten });
   } finally {
@@ -911,8 +913,9 @@ describe('pipeline', () => {
   });
 
   test('the issuer blocked and SEC EDGAR answering: official SEC fees and months, null NAV, derived returns labelled as such', () => {
-    withSandbox(({ run, files }) => {
+    withSandbox(({ dir, run, files }) => {
       run();
+      rmSync(join(dir, 'api/parametric/funds/PAPI/meta.json')); // nothing official published for PAPI: nothing to keep
       expect(run({ TICKERS: 'PAPI', EDGAR_FALLBACK: 'true', MOCK_ISSUER_DENIED: '1' }).exitCode).toBe(0);
       const published = files();
       const row = indexRows(published).find((item) => item.ticker === 'PAPI');
@@ -927,6 +930,55 @@ describe('pipeline', () => {
       expect(meta.nav.value).toBeNull();
       expect(meta.holdings.source).toContain('N-PORT-P');
       expect(indexRows(published).map((item) => item.ticker)).toEqual(['PAPI', 'PEPS', 'PHEQ']);
+    });
+  });
+
+  test('a partial, empty or error-page issuer answer keeps the published official sections byte for byte; a full answer lacking a field is an honest null', () => {
+    withSandbox(({ run, files, freeze, rewritten }) => {
+      expect(run().exitCode).toBe(0);
+      const published = files();
+      freeze();
+      // run 2: pricing is an HTML error page, returns an empty object, yields an empty container, distribution is cut
+      const partial = {
+        'en-pricing': '<html><body>Access Denied</body></html>', 'en-returns': {}, 'en-yield': { en: {} }, 'en-distribution': { en: { shareClasses: [{}] } },
+      };
+      const second = run({ MOCK_API: JSON.stringify(partial) });
+      expect(second.exitCode).toBe(0);
+      expect(second.stdout.split('\n').filter((line) => line.startsWith('[ kept'))).toHaveLength(3); // one notice per fund
+      expect(second.stdout).toContain('kept the published pricing, returns, yields, distribution');
+      expect(files()).toEqual(published); // pricing with its date, SEC yield, returns with basis and performanceAsOf, distributions: unchanged
+      expect(rewritten()).toEqual([]);
+      // run 3: every file loads fully, the fields are genuinely absent -> null, nothing is refilled from the previous run
+      const absent = {
+        'en-pricing': { en: { shareClasses: [{ currencies: [{ pricings: { nav: '26.43', navAsOfDate: '10/01/2026', marketPrice: '26.48' } }] }] } },
+        'en-returns': { en: { shareClasses: [{ currencies: [{ performances: [API_PERF('MONTHLY', '09/30/2026', { ytd: '7.63' })] }] }] } },
+        'en-yield': { en: { shareClasses: [{ currencies: [{ yield: {} }] }] } },
+      };
+      const third = run({ TICKERS: 'PAPI', MOCK_API: JSON.stringify(absent) });
+      expect(third.exitCode).toBe(0);
+      expect(third.stdout).not.toContain('[ kept');
+      const row = indexRows(files()).find((item) => item.ticker === 'PAPI');
+      expect(row.metrics).toMatchObject({ secYield: null, ytd: 7.63, tr1y: null, returnsBasis: expect.stringContaining('official'), performanceAsOf: '2026-09-30' });
+      expect(JSON.parse(files()['funds/PAPI/meta.json']).premiumDiscount.amount).toBeNull();
+    });
+  });
+
+  test('a fund with a meta.json but neither an index row nor a catalog entry stays in the index', () => {
+    withSandbox(({ dir, run, files }) => {
+      run();
+      const published = files();
+      const meta = JSON.parse(published['funds/PAPI/meta.json']);
+      const ghost = { ...meta, ticker: 'GHST', name: 'Ghost ETF' };
+      mkdirSync(join(dir, 'api/parametric/funds/GHST'), { recursive: true });
+      writeFileSync(join(dir, 'api/parametric/funds/GHST/meta.json'), JSON.stringify(ghost));
+      expect(run({ TICKERS: 'PEPS' }).exitCode).toBe(0);
+      const rows = indexRows(files());
+      expect(rows.map((row) => row.ticker)).toEqual(['GHST', 'PAPI', 'PEPS', 'PHEQ']);
+      const rebuilt = rows.find((row) => row.ticker === 'GHST');
+      expect(rebuilt).toMatchObject({ name: 'Ghost ETF', dataFile: './funds/GHST/meta.json', terValue: 0.29, terGrossValue: 0.35, navValue: meta.nav.value });
+      expect(Object.keys(rebuilt.metrics)).toEqual(Object.keys(rows[1].metrics));
+      expect(indexRowFromMeta(ghost).metrics.returnsBasis).toContain('official');
+      expect(indexRowFromMeta({ ticker: 'BARE' }).metrics).toMatchObject({ ytd: null, returnsBasis: expect.any(String), performanceAsOf: null });
     });
   });
 
@@ -1030,7 +1082,7 @@ describe('network', () => {
     expect(headers[0]['X-Return-Format']).toBe('html');
   });
 
-  test('the issuer JSON service is read through the proxy envelope and any failed file fails the whole read', async () => {
+  test('the issuer JSON service is read through the proxy envelope; nothing loadable fails the read', async () => {
     const bodies = [API_FILES.detail, API_FILES.pricing, API_FILES.returns, API_FILES.yields, API_FILES.distribution];
     const urls: string[] = [];
     mockFetch((url) => {
@@ -1061,6 +1113,46 @@ describe('network', () => {
     await withRequestLane(0, () => fetchWithRetry('https://data.sec.gov/x', '[ test ]', {}, 0));
     expect(runHealth().answered).toBe(1);
     expect([runFailed(3, 3, 0), runFailed(3, 3, 1), runFailed(3, 1, 0), runFailed(0, 0, 0)]).toEqual([true, false, false, false]);
+  });
+
+  test('issuer reads send the curl client string, SEC reads the contact agent; a 403 on the first issuer attempt falls back to one proxy retry, then the issuer is skipped', async () => {
+    const seen: Array<{ url: string; ua: string }> = [];
+    mockFetch((url, init) => {
+      seen.push({ url, ua: String((init?.headers as Record<string, string>)['User-Agent']) });
+      if (url.startsWith('https://www.eatonvance.com/')) return new Response('Access Denied', { status: 403 });
+      if (url.startsWith('https://r.jina.ai/')) return new Response(`Markdown Content:\n${JSON.stringify(url.includes('en-pricing') ? API_FILES.pricing : url.includes('en-returns') ? API_FILES.returns : url.includes('en-yield') ? API_FILES.yields : url.includes('en-distribution') ? API_FILES.distribution : API_FILES.detail)}`);
+      return new Response('{}');
+    });
+    configureProxyGate(0);
+    const config = readConfig({ MAX_RETRIES: '2', REQUEST_SLEEP: '0' });
+    expect(ISSUER_UA).toBe('curl/8.7.1');
+    const product = await withRequestLane(0, () => loadIssuerApi('100637', 'PAPI', config));
+    expect(product.nav).toBe(26.4276);
+    expect(product.sections).toEqual({ detail: true, pricing: true, returns: true, yields: true, distribution: true });
+    const issuerCalls = seen.filter((item) => !item.url.startsWith('https://r.jina.ai/'));
+    expect(issuerCalls).toHaveLength(1); // one direct attempt, the rest of the run goes through the proxy
+    expect(issuerCalls[0].ua).toBe('curl/8.7.1');
+    expect(seen.filter((item) => item.url.startsWith('https://r.jina.ai/'))).toHaveLength(5);
+    await withRequestLane(0, () => fetchSecJson('https://data.sec.gov/submissions/CIK0001676326.json', '[ test ]', config));
+    expect(seen[seen.length - 1].ua).toBe(config.secUa);
+    expect(config.secUa).not.toBe(ISSUER_UA);
+  });
+
+  test('a section that did not load is kept from the published meta as one unit; fully loaded files and unpublished sections are not touched', () => {
+    const previous = {
+      nav: { value: 26.43, asOfDate: '2026-10-01', source: 'official Eaton Vance / MSIM product data (pricing)' },
+      marketPrice: { value: 26.48, asOfDate: '2026-10-01', source: 'official Eaton Vance / MSIM product data (market price)' },
+      premiumDiscount: { amount: 0.05 }, aum: { value: 1e8, source: 'derived: shares outstanding x NAV' },
+      returns: { returnsBasis: 'official Eaton Vance / MSIM month-end NAV returns (fund detail page)', performanceAsOf: '2026-09-30', monthEnd: { ytd: 7.63, yr1: 9 } },
+    };
+    const full = parseIssuerApi(API_FILES, 'PAPI');
+    expect(retainIssuerSections(full, 'PAPI', previous)).toEqual({ product: full, kept: [] });
+    const partial = parseIssuerApi({ ...API_FILES, pricing: {}, returns: {} }, 'PAPI');
+    const result = retainIssuerSections(partial, 'PAPI', previous);
+    expect(result.kept).toEqual(['pricing', 'returns']);
+    expect(result.product).toMatchObject({ nav: 26.43, navDate: '2026-10-01', marketPrice: 26.48, premiumDiscountAmount: 0.05, monthEnd: { asOfDate: '2026-09-30', ytd: 7.63, yr1: 9 }, secYield: 2.79 });
+    expect(retainIssuerSections(partial, 'PAPI', { ...previous, nav: { ...previous.nav, source: 'not available' }, returns: { ...previous.returns, returnsBasis: 'derived from the Yahoo Finance adjusted daily series' } }).kept).toEqual([]);
+    expect(retainIssuerSections(null, 'PAPI', null)).toEqual({ product: null, kept: [] });
   });
 
   test('HISTORY_RANGE sets an explicit Yahoo window: period1 = 0 for max, N years back otherwise', () => {

@@ -650,11 +650,11 @@ function secProxyHeaders(config: UpdaterConfig, kind: 'json' | 'xml' | 'text'): 
   return { ...secHeaders(config), ...(kind === 'xml' ? { 'X-Return-Format': 'html' } : {}) };
 }
 
-// The issuer's Akamai rule answers 403 to browser-looking and unknown agents (probed 2026-10-03). Evading it by
-// presenting another client (e.g. curl) is not done: the issuer reads are best-effort with the same honest contact
-// agent as the SEC reads, the first denial falls back to the proxy and then skips the issuer for the rest of the run.
-// Fields only the issuer publishes (NAV, premium/discount, SEC yield, ISIN, CUSIP) stay null when it is unreachable.
-const ISSUER_UA = SEC_UA_DEFAULT;
+// The issuer's Akamai rule answers 403 to browser-looking and unknown agents and 200 to plain HTTP-library agents
+// (probed 2026-10-03). Decision of the owner (2026-10-03): issuer reads present a plain curl client string. It is a
+// client string only (no cookies, no tokens, no evasion beyond it). One constant, used for the issuer (eatonvance.com
+// imwebdata JSON and the catalog) only: SEC reads keep the contact agent, Yahoo keeps its own.
+export const ISSUER_UA = 'curl/8.7.1';
 function issuerHeaders(): Record<string, string> {
   return { 'User-Agent': ISSUER_UA, Accept: 'application/json,text/html;q=0.9,*/*;q=0.8' };
 }
@@ -674,12 +674,14 @@ export function stripProxyPreamble(text: string): string {
 
 // Best-effort source: direct first, the rendering proxy only after a denial (global gate, one retry),
 // and once both are denied the issuer is skipped for the rest of the run instead of being hammered.
-async function fetchIssuerViaProxy(url: string, label: string, config: UpdaterConfig): Promise<string> {
+// `markUnreachable` is false for the catalog's extra proxy attempt: the direct request was answered (the page is only rendered
+// client side), so a denied proxy says nothing about the direct JSON service, which still has to be tried.
+async function fetchIssuerViaProxy(url: string, label: string, config: UpdaterConfig, markUnreachable = true): Promise<string> {
   try {
     const response = await fetchWithRetry(issuerUrl(url), `${label} (proxy)`, { headers: issuerHeaders() }, config.maxRetries);
     return stripProxyPreamble(await response.text());
   } catch (error) {
-    if (error instanceof HttpError && [403, 429].includes(error.status) && !issuerUnreachable) {
+    if (markUnreachable && error instanceof HttpError && [403, 429].includes(error.status) && !issuerUnreachable) {
       issuerUnreachable = true;
       console.warn(`[ issuer   ] unreachable from here (direct and proxy denied) - the issuer is skipped for the rest of this run; SEC EDGAR and Yahoo carry the feed`);
     }
@@ -909,7 +911,12 @@ export type ProductData = {
   quarterEnd: OfficialReturns;
   dividends: Array<{ epoch: number; amount: number; exDate: string; payDate: string; recordDate: string }>;
   holdings: ParsedHoldings | null;
+  /** Which of the five issuer files came back structurally complete in this run (a partial answer is a failed read of that section). */
+  sections?: Record<IssuerSection, boolean>;
+  /** Sections restored from the previously published official data because their read failed (see retainIssuerSections). */
+  kept?: IssuerSection[];
 };
+export type IssuerSection = 'detail' | 'pricing' | 'returns' | 'yields' | 'distribution';
 
 export type ChartDay = { date: string; close: number; adjClose: number; volume: number };
 export type ParsedChart = {
@@ -1815,7 +1822,67 @@ async function readPreviousIndex(): Promise<Map<string, JsonRecord>> {
   } catch {
     // First run.
   }
+  // Every fund with a meta.json belongs to the feed, even when the index lost its row and the catalog no longer lists it.
+  let tickers: string[] = [];
+  try { tickers = (await readdir(new URL('funds/', API_ROOT))).sort(); } catch { /* no fund files yet */ }
+  for (const ticker of tickers) {
+    if (map.has(ticker)) continue;
+    let meta: JsonRecord;
+    try { meta = JSON.parse(await readFile(new URL(`funds/${ticker}/meta.json`, API_ROOT), 'utf8')) as JsonRecord; } catch { continue; }
+    if (meta.ticker === ticker) map.set(ticker, indexRowFromMeta(meta));
+  }
   return map;
+}
+
+/** Rebuilds an index row from a fund's meta.json: every key of the metrics contract, null for what the meta does not carry. */
+export function indexRowFromMeta(meta: JsonRecord): JsonRecord {
+  const ticker = String(meta.ticker);
+  const returns = (meta.returns as JsonRecord) || {};
+  const monthEnd = (returns.monthEnd as JsonRecord) || {};
+  const official = returns.returnsBasis === OFFICIAL_RETURNS_BASIS;
+  const yields = (meta.yields as JsonRecord) || {};
+  const asOf = official && typeof returns.performanceAsOf === 'string' ? returns.performanceAsOf : null;
+  const metrics = deriveCatalogMetrics(
+    official ? { ytd: numberOrNull(monthEnd.ytd), yr1: numberOrNull(monthEnd.yr1), yr3: numberOrNull(monthEnd.yr3), yr5: numberOrNull(monthEnd.yr5), yr10: numberOrNull(monthEnd.yr10), sinceInception: numberOrNull(monthEnd.sinceInception) } : EMPTY_RETURNS,
+    EMPTY_PRICE_RETURNS, numberOrNull(yields.dividendYield), numberOrNull(yields.secYield), null, null, null, null, asOf,
+  );
+  const display = (value: unknown): string => (typeof value === 'string' && value ? value : '—');
+  const block = (key: string): JsonRecord => (meta[key] as JsonRecord) || {};
+  const identifiers = block('identifiers');
+  const expense = block('expense');
+  const rows = (block('distributions').rows as string[][]) || [];
+  const last = rows.length ? rows[rows.length - 1] : null;
+  return {
+    ticker,
+    name: String(meta.name ?? ticker),
+    category: String(meta.category ?? 'ETF'),
+    categoryPath: String(meta.categoryPath ?? meta.category ?? 'ETF'),
+    fundPage: String(block('source').fundPage ?? ISSUER_CATALOG),
+    dataFile: `./funds/${ticker}/meta.json`,
+    cusip: identifiers.cusip ?? null,
+    isin: identifiers.isin ?? null,
+    exchange: String(meta.exchange ?? ''),
+    ter: display(expense.display),
+    terValue: numberOrNull(expense.net),
+    terGross: expense.gross === null || expense.gross === undefined ? '—' : `${expense.gross}%`,
+    terGrossValue: numberOrNull(expense.gross),
+    nav: display(block('nav').display),
+    navValue: numberOrNull(block('nav').value),
+    aum: display(block('aum').display),
+    aumValue: numberOrNull(block('aum').value),
+    aumAsOfDate: display(block('aum').asOfDate),
+    asOfDate: display(block('nav').asOfDate ? formatEdgarDate(String(block('nav').asOfDate)) : null),
+    inceptionDate: display(block('inception').inceptionDate),
+    closePrice: display(block('marketPrice').display),
+    closePriceValue: numberOrNull(block('marketPrice').value),
+    premiumDiscount: display(block('premiumDiscount').display),
+    premiumDiscountValue: numberOrNull(block('premiumDiscount').value),
+    distributions: { frequency: String(block('distributions').frequency ?? '—'), exDate: last ? String(last[0]) : '—', dividend: last ? String(last[1]) : '—' },
+    returns: { monthEnd, quarterEnd: returns.quarterEnd ?? null },
+    metrics,
+    holdings: numberOrNull(block('holdings').totalRows) ?? 0,
+    history: numberOrNull(block('history').totalRows) ?? 0,
+  };
 }
 
 async function readPreviousSheet(ticker: string, kind: 'holdings' | 'history'): Promise<JsonRecord[]> {
@@ -2341,6 +2408,22 @@ function apiReturnsRow(rows: ApiJson[], timeFrame: string, inception: string | n
   };
 }
 
+const isRecord = (value: unknown): boolean => typeof value === 'object' && value !== null && !Array.isArray(value);
+/**
+ * A file counts as loaded only when its own container is present: an empty object, an HTML error page or a file
+ * cut by the proxy is a failed read of that section, while a container that merely lacks a field is an honest null.
+ */
+export const ISSUER_SECTION_LOADED: Record<IssuerSection, (json: ApiJson) => boolean> = {
+  detail: (json) => { const detail = json?.en ?? json; return Array.isArray(detail?.shareClasses) && detail.shareClasses.length > 0; },
+  pricing: (json) => {
+    const pricing = json?.en?.shareClasses?.[0]?.currencies?.[0]?.pricings;
+    return isRecord(pricing) && (apiNumber(pricing.nav4f ?? pricing.nav) !== null || apiNumber(pricing.marketPrice) !== null);
+  },
+  returns: (json) => Array.isArray(json?.en?.shareClasses?.[0]?.currencies?.[0]?.performances),
+  yields: (json) => isRecord(json?.en?.shareClasses?.[0]?.currencies?.[0]?.yield),
+  distribution: (json) => Array.isArray(json?.en?.shareClasses?.[0]?.distributions),
+};
+
 /** Product facts from the issuer JSON service: detail, pricing, returns, yield and distribution files (already parsed JSON). */
 export function parseIssuerApi(files: { detail: ApiJson; pricing: ApiJson; returns: ApiJson; yields: ApiJson; distribution: ApiJson }, ticker: string): ProductData {
   const detail = files.detail?.en ?? files.detail ?? {};
@@ -2405,6 +2488,11 @@ export function parseIssuerApi(files: { detail: ApiJson; pricing: ApiJson; retur
     quarterEnd,
     dividends,
     holdings: null,
+    sections: {
+      detail: ISSUER_SECTION_LOADED.detail(files.detail), pricing: ISSUER_SECTION_LOADED.pricing(files.pricing), returns: ISSUER_SECTION_LOADED.returns(files.returns),
+      yields: ISSUER_SECTION_LOADED.yields(files.yields), distribution: ISSUER_SECTION_LOADED.distribution(files.distribution),
+    },
+    kept: [],
   };
 }
 
@@ -2673,21 +2761,110 @@ export function nportBelongsToFund(parsed: { seriesId: string; seriesName: strin
   return Boolean(filed && wanted && (filed === wanted || filed.includes(wanted) || wanted.includes(filed)));
 }
 
-/** Reads the five issuer JSON files of one fund (direct, then through the rendering proxy). Any failed file fails the whole read. */
+/**
+ * Reads the five issuer JSON files of one fund (direct, then through the rendering proxy). A file that fails, is not JSON
+ * or lacks its container is a FAILED section (`product.sections`), not a null: the caller keeps the published section.
+ * The read throws only when no section at all could be loaded.
+ */
 export async function loadIssuerApi(productId: string, ticker: string, config: UpdaterConfig): Promise<ProductData> {
   const names = ['detail', 'pricing', 'returns', 'yields', 'distribution'] as const;
-  const loaded: Record<string, ApiJson> = {};
+  const loaded: Record<string, ApiJson> = { detail: {}, pricing: {}, returns: {}, yields: {}, distribution: {} };
+  let firstError: Error | null = null;
+  const failed: string[] = [];
   for (const [index, part] of ISSUER_API_PARTS.entries()) {
-    const text = await fetchIssuerText(issuerApiUrl(productId, part), `[ product  ] ${ticker} ${part.replace('detail/', '')}`, config);
+    const name = names[index];
     try {
-      loaded[names[index]] = JSON.parse(proxyPayload(text, 'json')) as ApiJson;
-    } catch {
-      throw new Error(`${ticker}: ${part} is not JSON`);
+      const text = await fetchIssuerText(issuerApiUrl(productId, part), `[ product  ] ${ticker} ${part.replace('detail/', '')}`, config);
+      let json: ApiJson;
+      try { json = JSON.parse(proxyPayload(text, 'json')) as ApiJson; } catch { throw new Error(`${ticker}: ${part} is not JSON`); }
+      if (!ISSUER_SECTION_LOADED[name](json)) throw new Error(`${ticker}: ${part} came back partial or empty`);
+      loaded[name] = json;
+    } catch (error) {
+      firstError ??= error instanceof Error ? error : new Error(String(error));
+      failed.push(name);
     }
   }
   const product = parseIssuerApi(loaded as { detail: ApiJson; pricing: ApiJson; returns: ApiJson; yields: ApiJson; distribution: ApiJson }, ticker);
-  if (product.nav === null || product.marketPrice === null) throw new Error(`${ticker}: issuer pricing file carries no NAV or market price`);
+  if (!Object.values(product.sections!).some(Boolean)) throw firstError ?? new Error(`${ticker}: no issuer file could be loaded`);
+  if (failed.length) outputNote(`[ product  ] ${ticker}: ${failed.join(', ')} not loaded (${errorMessage(firstError)})`);
   return product;
+}
+
+const OFFICIAL_RETURNS_BASIS = 'official Eaton Vance / MSIM month-end NAV returns (fund detail page)';
+const OFFICIAL_SOURCE = /^official Eaton Vance/;
+const OFFICIAL_SEC_YIELD = /^30-day SEC yield as published by eatonvance\.com/;
+const OFFICIAL_DISTRIBUTIONS_SOURCE = 'official Eaton Vance / MSIM distribution schedule';
+
+function publishedReturnsRow(block: unknown, asOfDate: string | null): OfficialReturns | null {
+  if (!isRecord(block)) return null;
+  const row = block as JsonRecord;
+  const out: OfficialReturns = {
+    asOfDate, mo1: numberOrNull(row.mo1), mo3: null, qtd: numberOrNull(row.qtd), ytd: numberOrNull(row.ytd), yr1: numberOrNull(row.yr1),
+    yr3: numberOrNull(row.yr3), yr5: numberOrNull(row.yr5), yr10: numberOrNull(row.yr10), sinceInception: numberOrNull(row.sinceInception),
+  };
+  return [out.ytd, out.yr1, out.yr3, out.yr5, out.yr10, out.sinceInception, out.mo1].some((value) => value !== null) ? out : null;
+}
+
+/**
+ * The issuer answered partly (or not at all): every section whose read failed and that was published as official before is
+ * restored from the previous meta.json as ONE unit (values with their dates, basis and sources), so the normal build
+ * republishes it unchanged instead of flipping to nulls or Yahoo-derived values. A fully loaded file that lacks a field is
+ * an honest null and is never refilled. Returns the product (a shell when nothing loaded) and the kept section names;
+ * null when nothing failed or nothing official was published.
+ */
+export function retainIssuerSections(product: ProductData | null, ticker: string, previousMeta: JsonRecord | null): { product: ProductData | null; kept: IssuerSection[] } {
+  const loaded = product?.sections ?? { detail: false, pricing: false, returns: false, yields: false, distribution: false };
+  if (!previousMeta || Object.values(loaded).every(Boolean)) return { product, kept: [] };
+  const base = product ?? parseIssuerApi({ detail: {}, pricing: {}, returns: {}, yields: {}, distribution: {} }, ticker);
+  const kept: IssuerSection[] = [];
+  const iso = (value: unknown): string | null => { const date = toIsoDate(value); return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null; };
+  if (!loaded.detail && OFFICIAL_SOURCE.test(String(previousMeta.expense?.source ?? '')) && (numberOrNull(previousMeta.expense?.net) !== null || numberOrNull(previousMeta.expense?.gross) !== null)) {
+    base.netExpense = numberOrNull(previousMeta.expense.netDisplay === null ? null : previousMeta.expense.net);
+    base.grossExpense = numberOrNull(previousMeta.expense.grossDisplay === null ? null : previousMeta.expense.gross);
+    base.inception = OFFICIAL_SOURCE.test(String(previousMeta.inception?.source ?? '')) ? iso(previousMeta.inception?.fundInceptionDate) : null;
+    base.benchmark = cleanText(previousMeta.identifiers?.indexTicker || '');
+    base.frequencyCode = String(previousMeta.distributions?.frequencyCode || '');
+    kept.push('detail');
+  }
+  const nav = previousMeta.nav;
+  if (!loaded.pricing && OFFICIAL_SOURCE.test(String(nav?.source ?? '')) && numberOrNull(nav?.value) !== null) {
+    base.nav = numberOrNull(nav.value);
+    base.navDate = iso(nav.asOfDate);
+    const price = previousMeta.marketPrice;
+    base.marketPrice = OFFICIAL_SOURCE.test(String(price?.source ?? '')) ? numberOrNull(price.value) : null;
+    base.marketPriceDate = base.marketPrice !== null ? iso(price.asOfDate) : null;
+    base.premiumDiscountAmount = numberOrNull(previousMeta.premiumDiscount?.amount);
+    base.bidAskSpread = numberOrNull(previousMeta.bidAskSpread?.value);
+    base.netAssets = numberOrNull(previousMeta.aum?.value);
+    base.netAssetsDate = base.navDate;
+    base.netAssetsKind = String(previousMeta.aum?.source || base.netAssetsKind);
+    kept.push('pricing');
+  }
+  const published = previousMeta.returns;
+  if (!loaded.returns && published?.returnsBasis === OFFICIAL_RETURNS_BASIS && iso(published.performanceAsOf)) {
+    const asOf = iso(published.performanceAsOf);
+    const monthEnd = publishedReturnsRow(published.monthEnd, asOf);
+    if (monthEnd) {
+      base.monthEnd = monthEnd;
+      if (/^official/.test(String(published.quarterEndBasis ?? ''))) base.quarterEnd = publishedReturnsRow(published.quarterEnd, isoFromEdgar(published.quarterEnd?.asOfDate)) ?? base.quarterEnd;
+      kept.push('returns');
+    }
+  }
+  const yields = previousMeta.yields;
+  if (!loaded.yields && OFFICIAL_SEC_YIELD.test(String(yields?.secYieldKind ?? '')) && numberOrNull(yields?.secYield) !== null) {
+    base.secYield = numberOrNull(yields.secYield);
+    base.secYieldDate = isoFromEdgar(/as of (.+)$/.exec(String(yields.secYieldKind))?.[1] ?? '');
+    kept.push('yields');
+  }
+  const priorDividends = previousDividends(previousMeta);
+  if (!loaded.distribution && previousMeta.distributions?.source === OFFICIAL_DISTRIBUTIONS_SOURCE && priorDividends.length) {
+    base.dividends = priorDividends.map((payment) => ({ ...payment, exDate: new Date(payment.epoch * 1000).toISOString().slice(0, 10), payDate: '', recordDate: '' }));
+    base.latestDividend = base.dividends[base.dividends.length - 1];
+    kept.push('distribution');
+  }
+  if (!kept.length) return { product, kept };
+  base.kept = kept;
+  return { product: base, kept };
 }
 
 async function loadIssuerHoldings(fund: CatalogFund, pageText: string, config: UpdaterConfig): Promise<ParsedHoldings | null> {
@@ -2852,6 +3029,14 @@ async function processFund(
     }
   }
   const issuerAnswered = product !== null;
+  // A failed or partial issuer read keeps the published official sections (one unit each); one notice per fund.
+  let keptSections: IssuerSection[] = [];
+  if (!config.skipIssuer && (!product || product.sections) && Object.keys(previousMeta).length) {
+    ({ product, kept: keptSections } = retainIssuerSections(product, ticker, previousMeta));
+    if (keptSections.length) console.log(`[ ${'kept'.padEnd(9)}] ${ticker}: the issuer read ${issuerAnswered ? 'came back partial' : 'failed'}, kept the published ${keptSections.join(', ')}`);
+  }
+  const known = (section: IssuerSection): boolean => Boolean(product && (!product.sections || product.sections[section] || product.kept?.includes(section)));
+  const secFacts = !known('detail');
   const officialHoldings = pageText ? await loadIssuerHoldings(fund, pageText, config) : null;
   if (officialHoldings && product) product.holdings = officialHoldings;
   const cusip = product?.cusip || fund.cusip || String(previous.identifiers?.cusip || '');
@@ -2867,7 +3052,7 @@ async function processFund(
   let prospectus: ProspectusRead | null = null;
   if (config.edgarFallback) {
     const needHoldings = !holdings;
-    const wanted = product ? 0 : NPORT_RETURN_FILINGS;
+    const wanted = known('returns') ? 0 : NPORT_RETURN_FILINGS;
     try {
       const resolved = await resolveNportFilings(fund, config);
       if (resolved) {
@@ -2900,9 +3085,9 @@ async function processFund(
     } catch (error) {
       console.warn(`[ edgar    ] ${ticker}: ${errorMessage(error)}`);
     }
-    if (!product) {
+    if (secFacts) {
       const classId = (await loadFundTickerMap(config)).get(ticker)?.classId ?? '';
-      secReturns = nportQuarterReturns(nportFilings, classId);
+      secReturns = known('returns') ? null : nportQuarterReturns(nportFilings, classId);
       try {
         prospectus = await loadProspectus(fund, config);
         if (!prospectus) console.warn(`[ edgar    ] ${ticker}: no 497K summary prospectus with a fee table found`);
@@ -2982,11 +3167,12 @@ async function processFund(
   //    (an older published NAV, TER or yield is never presented as current). Immutable facts (inception, identifiers) are kept.
   const inception = product?.inception ?? prospectus?.facts.inception ?? fund.inception ?? null;
   const inceptionSource = product?.inception ? 'issuer' : prospectus?.facts.inception ? 'sec-497k' : inception ? 'previous run (immutable)' : null;
-  const returnsAsOfDate = product?.monthEnd.asOfDate ?? null;
-  const official = officialReturnsFor(product);
-  const officialCumulative = product?.quarterEnd ? { ...EMPTY_CUMULATIVE } : null;
-  const feeNet = product ? product.netExpense : prospectus?.facts.netExpense ?? null;
-  const feeGross = product ? product.grossExpense : prospectus?.facts.grossExpense ?? null;
+  const officialProduct = known('returns') ? product : null;
+  const returnsAsOfDate = officialProduct?.monthEnd.asOfDate ?? null;
+  const official = officialReturnsFor(officialProduct);
+  const officialCumulative = officialProduct?.quarterEnd ? { ...EMPTY_CUMULATIVE } : null;
+  const feeNet = secFacts ? prospectus?.facts.netExpense ?? null : product!.netExpense;
+  const feeGross = secFacts ? prospectus?.facts.grossExpense ?? null : product!.grossExpense;
   const ter = feeNet ?? feeGross;
   const terGross = feeGross ?? feeNet;
   const nav = product ? product.nav : null;
@@ -3039,7 +3225,7 @@ async function processFund(
   const netAssets = catalogNetAssets ?? nportNetAssets ?? (product ? null : (fund.netAssets ?? null));
   const aumDate = catalogNetAssets !== null ? (product?.netAssetsDate ?? null) : (nportNetAssets !== null ? (latestNport?.repPdDate || null) : null);
   const navAsOfDate = product?.navDate ?? null;
-  const returnsData = returnsBlock(derived, official, product ? product.monthEnd.mo1 : null, returnsAsOfDate, previous, product ? { qtd: product.monthEnd.qtd ?? null, quarterEnd: product.quarterEnd } : null, secReturns);
+  const returnsData = returnsBlock(derived, official, officialProduct ? officialProduct.monthEnd.mo1 : null, returnsAsOfDate, previous, officialProduct ? { qtd: officialProduct.monthEnd.qtd ?? null, quarterEnd: officialProduct.quarterEnd } : null, secReturns);
   const rowAsOfDate = navAsOfDate ?? priceDate;
   const asOfLabel = rowAsOfDate ? formatEdgarDate(rowAsOfDate) : String(previous.asOfDate ?? '—');
   const category = product?.assetClass && product.assetClass !== 'ETF' ? product.assetClass : fund.category;
@@ -3080,8 +3266,8 @@ async function processFund(
       display: ter === null ? '—' : `${ter.toFixed(2)}%`,
       grossDisplay: feeGross === null ? null : `${feeGross.toFixed(2)}%`,
       netDisplay: feeNet === null ? null : `${feeNet.toFixed(2)}%`,
-      asOf: product ? asOfLabel : prospectus ? formatEdgarDate(prospectus.facts.documentDate || prospectus.filed) : '—',
-      source: product
+      asOf: !secFacts ? asOfLabel : prospectus ? formatEdgarDate(prospectus.facts.documentDate || prospectus.filed) : '—',
+      source: !secFacts
         ? 'official Eaton Vance / MSIM product data (net and gross expense ratio; terValue is the net ratio)'
         : prospectus
           ? `official SEC Form 497K summary prospectus dated ${prospectus.facts.documentDate || prospectus.filed} (accession ${prospectus.accession}): gross = total annual fund operating expenses, net = after fee waiver; terValue is the net ratio`
@@ -3091,7 +3277,7 @@ async function processFund(
       display: nav === null ? '—' : `$${nav.toFixed(2)}`,
       value: nav,
       asOfDate: navAsOfDate,
-      source: product ? 'official Eaton Vance / MSIM product data (pricing)' : 'not available: the per-share NAV is published only on the issuer site, which blocks datacenter runners (SEC filings carry no daily NAV)',
+      source: known('pricing') ? 'official Eaton Vance / MSIM product data (pricing)' : 'not available: the per-share NAV is published only on the issuer site, which blocks datacenter runners (SEC filings carry no daily NAV)',
     },
     marketPrice: {
       display: price === null ? '—' : `$${price.toFixed(2)}`,
@@ -3103,14 +3289,14 @@ async function processFund(
       display: premiumDiscount === null ? '—' : `${premiumDiscount.toFixed(2)}%`,
       value: premiumDiscount,
       asOfDate: navAsOfDate,
-      source: product ? 'computed from the issuer NAV and market price of the same date' : 'not available without the issuer NAV',
+      source: known('pricing') ? 'computed from the issuer NAV and market price of the same date' : 'not available without the issuer NAV',
       amount: premiumDiscountAmount,
     },
     bidAskSpread: {
       display: product?.bidAskSpread === null || product?.bidAskSpread === undefined ? '—' : `${product.bidAskSpread.toFixed(2)}%`,
       value: product?.bidAskSpread ?? null,
       asOfDate: navAsOfDate,
-      source: product ? 'official Eaton Vance / MSIM product data (median bid/ask spread)' : 'not available without the issuer product data',
+      source: known('pricing') ? 'official Eaton Vance / MSIM product data (median bid/ask spread)' : 'not available without the issuer product data',
     },
     aum: {
       display: netAssets === null ? '—' : `$${(netAssets / 1e6).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} M`,
@@ -3139,6 +3325,7 @@ async function processFund(
       frequency: frequency.frequency,
       paymentsPerYear: frequency.paymentsPerYear,
       frequencyCode: product?.frequencyCode || null,
+      source: product?.dividends.length ? OFFICIAL_DISTRIBUTIONS_SOURCE : yahooDividends.length ? 'Yahoo Finance chart API dividends' : String((previous.distributions as JsonRecord)?.source || 'previous run'),
       headers: ['Ex-Date', 'Amount'],
       rows: distributions,
     },
@@ -3359,7 +3546,7 @@ async function main(): Promise<void> {
       } catch (error) {
         // The catalog is rendered client side: a direct answer without fund links is retried once through the rendering proxy.
         if (issuerProxyOnly || issuerUnreachable || !/no Parametric fund links/.test(errorMessage(error))) throw error;
-        entries = parseIssuerCatalog(await fetchIssuerViaProxy(config.catalogUrl, '[ catalog  ]', config));
+        entries = parseIssuerCatalog(await fetchIssuerViaProxy(config.catalogUrl, '[ catalog  ]', config, false));
       }
       for (const entry of entries) {
         const fund = catalogFundFromIndex(entry.ticker, previousIndex.get(entry.ticker) || {});
