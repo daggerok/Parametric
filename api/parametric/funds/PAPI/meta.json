@@ -110,6 +110,7 @@
   "frequency": "Monthly",
   "paymentsPerYear": 12,
   "frequencyCode": "M",
+  "source": "official Eaton Vance / MSIM distribution schedule",
   "headers": [
    "Ex-Date",
    "Amount"
