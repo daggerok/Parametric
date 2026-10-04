@@ -314,7 +314,7 @@ describe('controls', () => {
       expect(() => resolveControls(bad), label).toThrow();
       expect(() => resolveControls({}, bad), label).toThrow();
       expect(() => resolveControls({}, {}, bad), label).toThrow();
-      if (bad && !Array.isArray(bad) && !('UNKNOWN' in bad)) {
+      if (typeof bad === 'object' && bad !== null && !Array.isArray(bad) && !('UNKNOWN' in bad)) {
         const env = Object.fromEntries(Object.entries(bad).map(([key, value]) => [`PARAMETRIC_${key}`, value as string]));
         expect(() => resolveControls({}, {}, {}, env), label).toThrow();
       }
