@@ -1596,6 +1596,24 @@ export function lastCompletedQuarterEnd(now = new Date()): Date {
   return new Date(Date.UTC(year, 8, 30)); // Oct-Dec -> Sep 30
 }
 
+export type DividendYieldBasis = 'official-trailing-12m' | 'official-distribution-rate' | 'official-other' | 'computed-trailing-12m' | 'indicated';
+export const DIVIDEND_YIELD_BASES: readonly DividendYieldBasis[] = ['official-trailing-12m', 'official-distribution-rate', 'official-other', 'computed-trailing-12m', 'indicated'];
+
+/**
+ * Code of the definition behind a stored yield, read back from a meta.json: the stored code wins, else the
+ * legacy `dividendYieldKind` text decides. Null exactly when there is no yield. Parametric publishes no
+ * dividend yield, so an unknown text with a yield is only `official-other` when it is not the indicated estimate.
+ */
+export function dividendYieldBasisFromMeta(yields: JsonRecord, hasYield: boolean): DividendYieldBasis | null {
+  if (!hasYield) return null;
+  const stored = String(yields.dividendYieldBasis ?? '');
+  const known = DIVIDEND_YIELD_BASES.find((code) => code === stored);
+  if (known) return known;
+  const kind = String(yields.dividendYieldKind ?? '');
+  if (kind === '' || /^indicated\b/.test(kind)) return 'indicated';
+  return 'official-other';
+}
+
 /**
  * Merges the official Eaton Vance returns with the ones derived from the
  * adjusted daily series. Official figures win wherever they exist (they are the
@@ -1611,6 +1629,7 @@ export function deriveCatalogMetrics(
   price: number | null,
   officialCumulative: CumulativeReturns | null = null,
   officialAsOf: string | null = null,
+  publishedYieldBasis: DividendYieldBasis | null = null,
 ): JsonRecord {
   const coalesce = (value: number | null | undefined): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
   const ytd = coalesce(official.ytd) ?? coalesce(derived.ytd);
@@ -1633,7 +1652,10 @@ export function deriveCatalogMetrics(
       : 'derived from the Yahoo Finance adjusted daily series, not official NAV returns';
   // Official figures are as of the issuer's returns table; derived ones as of the last Yahoo close.
   const performanceAsOf = usedOfficial ? (officialAsOf || null) : (derived.asOfDate || null);
-  const dividendYield = coalesce(publishedDividendYield) ?? indicatedYield(latestDistribution, paymentsPerYear, price);
+  const published = coalesce(publishedDividendYield);
+  const dividendYield = published ?? indicatedYield(latestDistribution, paymentsPerYear, price);
+  // The code travels with the yield it describes: a provider-published yield is official-other unless the caller knows better.
+  const dividendYieldBasis: DividendYieldBasis | null = dividendYield === null ? null : published !== null ? (publishedYieldBasis ?? 'official-other') : 'indicated';
   const text = (value: number | null): string | null => (value === null ? null : `${value.toFixed(2)}%`);
   return {
     ytd,
@@ -1647,6 +1669,7 @@ export function deriveCatalogMetrics(
     siAnn,
     dividendYield,
     dividendYieldText: text(dividendYield) ?? '—',
+    dividendYieldBasis,
     secYield: coalesce(publishedSecYield),
     secYieldText: text(coalesce(publishedSecYield)) ?? '—',
     returnsBasis,
@@ -1842,9 +1865,11 @@ export function indexRowFromMeta(meta: JsonRecord): JsonRecord {
   const official = returns.returnsBasis === OFFICIAL_RETURNS_BASIS;
   const yields = (meta.yields as JsonRecord) || {};
   const asOf = official && typeof returns.performanceAsOf === 'string' ? returns.performanceAsOf : null;
+  const storedYield = numberOrNull(yields.dividendYield);
   const metrics = deriveCatalogMetrics(
     official ? { ytd: numberOrNull(monthEnd.ytd), yr1: numberOrNull(monthEnd.yr1), yr3: numberOrNull(monthEnd.yr3), yr5: numberOrNull(monthEnd.yr5), yr10: numberOrNull(monthEnd.yr10), sinceInception: numberOrNull(monthEnd.sinceInception) } : EMPTY_RETURNS,
-    EMPTY_PRICE_RETURNS, numberOrNull(yields.dividendYield), numberOrNull(yields.secYield), null, null, null, null, asOf,
+    EMPTY_PRICE_RETURNS, storedYield, numberOrNull(yields.secYield), null, null, null, null, asOf,
+    dividendYieldBasisFromMeta(yields, storedYield !== null),
   );
   const display = (value: unknown): string => (typeof value === 'string' && value ? value : '—');
   const block = (key: string): JsonRecord => (meta[key] as JsonRecord) || {};
@@ -3311,6 +3336,7 @@ async function processFund(
     yields: {
       dividendYield: metrics.dividendYield,
       dividendYieldText: metrics.dividendYieldText,
+      dividendYieldBasis: metrics.dividendYieldBasis,
       dividendYieldKind: metrics.dividendYield !== null
         ? 'indicated (latest distribution x payments per year / market price)'
         : 'not published: no distributions yet',
