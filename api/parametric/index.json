@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-10-03T06:45:47Z",
+ "generatedAt": "2026-10-04T03:26:14Z",
  "source": {
   "provider": "Eaton Vance / MSIM product pages (ETF catalog, fund facts, returns and distributions); SEC EDGAR Form N-PORT-P holdings; Yahoo Finance chart API (daily NAV history and dividends)",
   "site": "https://www.eatonvance.com",
@@ -84,6 +84,7 @@
     "siAnn": 9.4,
     "dividendYield": 7.99,
     "dividendYieldText": "7.99%",
+    "dividendYieldBasis": "indicated",
     "secYield": 2.79,
     "secYieldText": "2.79%",
     "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)",
@@ -164,6 +165,7 @@
     "siAnn": 16.67,
     "dividendYield": 1.03,
     "dividendYieldText": "1.03%",
+    "dividendYieldBasis": "indicated",
     "secYield": 0.97,
     "secYieldText": "0.97%",
     "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)",
@@ -244,6 +246,7 @@
     "siAnn": 14.08,
     "dividendYield": 0.55,
     "dividendYieldText": "0.55%",
+    "dividendYieldBasis": "indicated",
     "secYield": 0.81,
     "secYieldText": "0.81%",
     "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)",

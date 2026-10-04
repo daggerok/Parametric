@@ -67,6 +67,7 @@
  "yields": {
   "dividendYield": 0.55,
   "dividendYieldText": "0.55%",
+  "dividendYieldBasis": "indicated",
   "dividendYieldKind": "indicated (latest distribution x payments per year / market price)",
   "secYield": 0.81,
   "secYieldText": "0.81%",
@@ -110,6 +111,7 @@
   "frequency": "Quarterly",
   "paymentsPerYear": 4,
   "frequencyCode": "Q",
+  "source": "official Eaton Vance / MSIM distribution schedule",
   "headers": [
    "Ex-Date",
    "Amount"
