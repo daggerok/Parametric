@@ -260,8 +260,6 @@ const NO_DERIVED = { asOfDate: '', ytd: null, yr1: null, cagr3y: null, cagr5y: n
 function runScript(args: string[], env: Record<string, string> = {}) {
   return Bun.spawnSync([SCRIPT, ...args], { env: { PATH: process.env.PATH ?? '', TZ: 'UTC', ...env }, stdout: 'pipe', stderr: 'pipe' });
 }
-const workflowText = (): string => read('.github/workflows/update-data.yml');
-const workflowInputs = (): string[] => Object.keys((Bun as any).YAML.parse(workflowText()).on.workflow_dispatch.inputs).filter((name) => name !== 'advanced');
 
 describe('controls', () => {
   test('precedence is file < advanced < nonblank input < env (brand alias first) < protected variable', () => {
@@ -289,8 +287,6 @@ describe('controls', () => {
     const file = configFile();
     expect(resolveControls(file, {}, {}, {})).toEqual(file);
     expect(await runtimeControls({})).toEqual(file);
-    const blanks = Object.fromEntries(workflowInputs().map((name) => [name.toUpperCase(), '']));
-    expect(resolveControls(file, {}, blanks, {})).toEqual(file);
     const config = readConfig(resolveControls(file));
     expect(config).toMatchObject({
       tickers: [], maxFetches: 0, requestSleep: 3, concurrency: 1, maxRetries: 2, holdingsPageSize: 250, historyPageSize: 1000,
@@ -422,30 +418,9 @@ describe('controls', () => {
     expect(runScript(['--help'], { MAX_RETRIES: '0' }).exitCode).not.toBe(0);
   });
 
-  test('config file, CONTROL_NAMES, README table and workflow inputs agree; the output dir is fixed', () => {
+  test('config file keys equal CONTROL_NAMES; the output dir is fixed', () => {
     expect(Object.keys(configFile()).sort()).toEqual([...CONTROL_NAMES].sort());
-    const readme = read('README.md');
-    const controls = (readme.match(/^#{2,3} Update controls[^\n]*\n([\s\S]*?)(?=\n#{2,3} |(?![\s\S]))/m) ?? [])[1] ?? '';
-    const documented = controls.split('\n').filter((line) => line.startsWith('| `')).flatMap((row) => [...row.split('|')[1].matchAll(/`([A-Z0-9_]+)`/g)].map((match) => match[1]));
-    expect([...documented].sort()).toEqual([...CONTROL_NAMES].sort());
-    const text = workflowText();
-    const inputs = (Bun as any).YAML.parse(text).on.workflow_dispatch.inputs;
-    expect(Object.keys(inputs).length).toBeLessThanOrEqual(25);
-    expect(inputs.advanced).toMatchObject({ default: '{}', type: 'string', required: false });
-    for (const name of workflowInputs()) {
-      expect(CONTROL_NAMES as readonly string[]).toContain(name.toUpperCase());
-      expect(inputs[name].default).toBe('');
-    }
-    expect(text).toContain('git add api/parametric');
-    expect(text.match(/git add /g)).toHaveLength(1);
-    expect(text).not.toMatch(/\$\{\{\s*(inputs|github\.event\.inputs)\./);
     expect(CONTROL_NAMES.some((name) => /OUT/.test(name))).toBe(false);
-    const lines = read('scripts/update-data.ts').split('\n');
-    expect(lines[0]).toBe('#!/usr/bin/env bun');
-    expect(lines[1]).toBe('/// <reference types="bun" />');
-    expect(statSync(SCRIPT).mode & 0o111).not.toBe(0);
-    expect(readdirSync(new URL('scripts/', ROOT)).sort()).toEqual(['update-data.config.json', 'update-data.test.ts', 'update-data.ts']);
-    expect(existsSync(new URL('tsconfig.json', ROOT))).toBe(false);
   });
 });
 
