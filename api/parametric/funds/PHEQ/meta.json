@@ -30,48 +30,48 @@
   "display": "0.29%",
   "grossDisplay": "0.29%",
   "netDisplay": "0.29%",
-  "asOf": "Oct 02 2026",
+  "asOf": "Oct 09 2026",
   "source": "official Eaton Vance / MSIM product data (net and gross expense ratio; terValue is the net ratio)"
  },
  "nav": {
-  "display": "$35.54",
-  "value": 35.5352,
-  "asOfDate": "2026-10-02",
+  "display": "$35.81",
+  "value": 35.8103,
+  "asOfDate": "2026-10-09",
   "source": "official Eaton Vance / MSIM product data (pricing)"
  },
  "marketPrice": {
-  "display": "$35.61",
-  "value": 35.61,
-  "asOfDate": "2026-10-02",
+  "display": "$35.84",
+  "value": 35.84,
+  "asOfDate": "2026-10-09",
   "source": "official Eaton Vance / MSIM product data (market price)"
  },
  "premiumDiscount": {
-  "display": "0.21%",
-  "value": 0.21,
-  "asOfDate": "2026-10-02",
+  "display": "0.08%",
+  "value": 0.08,
+  "asOfDate": "2026-10-09",
   "source": "computed from the issuer NAV and market price of the same date",
-  "amount": 0.07
+  "amount": 0.03
  },
  "bidAskSpread": {
   "display": "0.28%",
   "value": 0.28,
-  "asOfDate": "2026-10-02",
+  "asOfDate": "2026-10-09",
   "source": "official Eaton Vance / MSIM product data (median bid/ask spread)"
  },
  "aum": {
-  "display": "$154.58 M",
-  "value": 154578120,
-  "asOfDate": "Oct 02 2026",
+  "display": "$152.19 M",
+  "value": 152193775,
+  "asOfDate": "Oct 09 2026",
   "source": "derived: shares outstanding x NAV (the issuer publishes no net assets figure)"
  },
  "yields": {
-  "dividendYield": 0.55,
-  "dividendYieldText": "0.55%",
+  "dividendYield": 0.54,
+  "dividendYieldText": "0.54%",
   "dividendYieldBasis": "indicated",
   "dividendYieldKind": "indicated (latest distribution x payments per year / market price)",
-  "secYield": 0.81,
-  "secYieldText": "0.81%",
-  "secYieldKind": "30-day SEC yield as published by eatonvance.com, as of Aug 31 2026"
+  "secYield": 0.82,
+  "secYieldText": "0.82%",
+  "secYieldKind": "30-day SEC yield as published by eatonvance.com, as of Sep 30 2026"
  },
  "returns": {
   "derivedFrom": "official Eaton Vance / MSIM published returns; month-to-date and history-derived periods use the Yahoo Finance adjusted series",
@@ -182,8 +182,8 @@
    "history/001.json"
   ],
   "pageSize": 1000,
-  "totalRows": 741,
-  "asOf": "Oct 02 2026",
+  "totalRows": 746,
+  "asOf": "Oct 09 2026",
   "source": "Yahoo Finance public chart API (adjusted close)"
  }
 }
