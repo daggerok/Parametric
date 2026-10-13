@@ -11,19 +11,23 @@ import { fileURLToPath as outputFileURLToPath } from 'node:url';
 
 const outputClean = (value: unknown): string => String(value ?? 'null').replace(/[\r\n\t]+/g, ' ');
 /** Presentation only: per-fund retry and fallback notices are printed when VERBOSE is enabled. */
-const outputVerbose = (): boolean => /^(1|true|yes|y|on)$/i.test((globalThis as any).process?.env?.VERBOSE ?? '');
+const outputVerbose = (): boolean => /^(1|true|yes|on)$/i.test((globalThis as any).process?.env?.VERBOSE ?? '');
 function outputNote(message: string): void { if (outputVerbose()) console.warn(message); }
 /** Names are the canonical environment knobs, not internal parser properties. */
 function outputConfigEntries(config: Record<string, any>): [string, string][] {
   const values = new Map<string, string>();
   const aliases: Record<string, string> = {
-    requestSleep: 'REQUEST_SLEEP', catalogUrl: 'CATALOG_URL',
+    requestSleepSeconds: 'REQUEST_SLEEP', categories: 'CATEGORY',
     aumRange: 'AUM', terRange: 'TER', dividendYieldRange: 'DIVIDEND_YIELD', secYieldRange: 'SEC_YIELD',
     performanceRanges: 'PERFORMANCE', totalReturnRanges: 'TOTAL_RETURN',
+    skipVanEck: 'SKIP_VANECK', skipProShares: 'SKIP_PROSHARES',
+    skipWisdomTree: 'SKIP_WISDOMTREE', skipGoldmanSachs: 'SKIP_GOLDMANSACHS',
+    skipGlobalX: 'SKIP_GLOBALX', skipNorthernTrust: 'SKIP_NORTHERNTRUST',
   };
-  const range = (v: any): string => v?.source ?? `${Number.isFinite(v?.min) ? v.min : ''}:${Number.isFinite(v?.max) ? v.max : ''}`;
+  const range = (v: any): string => typeof v === 'string' ? v : v?.source ?? `${Number.isFinite(v?.min) ? v.min : ''}:${Number.isFinite(v?.max) ? v.max : ''}`;
   for (const [key, value] of Object.entries(config)) {
-    const name = aliases[key] ?? key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase();
+    if (['proxyGapMs', 'fetchTimeoutMs', 'retryDelayMs'].includes(key)) continue;
+    const name = aliases[key] ?? (/^[A-Z0-9_]+$/.test(key) ? key : key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase());
     if (name === 'PERFORMANCE' || name === 'TOTAL_RETURN') {
       for (const period of ['YTD', '1Y', '3Y', '5Y', '10Y']) values.set(`${name}_${period}`, range(value?.[period]));
     } else if (['AUM', 'TER', 'DIVIDEND_YIELD', 'SEC_YIELD'].includes(name)) {
@@ -38,13 +42,18 @@ function outputConfigEntries(config: Record<string, any>): [string, string][] {
     return (ai < 0 ? first.length : ai) - (bi < 0 ? first.length : bi) || a.localeCompare(b);
   });
 }
+function outputConfigValue(key: string, value: string): string {
+  if (/TOKEN|PASSWORD|SECRET|COOKIE|SEC_UA/i.test(key)) return '<redacted>';
+  if (key === 'TICKERS' && ['', 'null', 'undefined'].includes(value)) return 'all';
+  return outputClean(value);
+}
 function outputPrintConfig(brand: string, config: Record<string, any>): void {
   const entries: [string, string][] = [...outputConfigEntries(config), ['VERBOSE', String(outputVerbose())]];
-  console.log(`[ config   ] ${brand} updater:\n${entries.map(([key, value]) => `              ${key}=${/TOKEN|PASSWORD|SECRET|COOKIE|SEC_UA/i.test(key) ? '<redacted>' : outputClean(value)}`).join('\n')}`);
+  console.log(`[ config   ] ${brand} updater:\n${entries.map(([key, value]) => `              ${key}=${outputConfigValue(key, value)}`).join('\n')}`);
 }
 function outputHasOutputFilters(config: Record<string, any>): boolean {
   return outputConfigEntries(config).some(([name, value]) =>
-    /^(TICKERS|CATEGORY|AUM|TER|DIVIDEND_YIELD|SEC_YIELD|PERFORMANCE_|TOTAL_RETURN_)/.test(name) &&
+    /^(CATEGORY|AUM|TER|DIVIDEND_YIELD|SEC_YIELD|PERFORMANCE_|TOTAL_RETURN_)/.test(name) &&
     !['', ':', 'null', 'all'].includes(value));
 }
 function outputPrintFilter(selected: number, total: number, deferred = false): void {
@@ -76,18 +85,29 @@ async function outputInspectFund(root: URL | string, ticker: string): Promise<{ 
 }
 const outputCount = (value: any): unknown => typeof value === 'number' ? value : Array.isArray(value) ? value.length : value?.totalRows ?? value?.rows?.length ?? null;
 const outputScalar = (value: any): any => value && typeof value === 'object' ? value.display ?? value.value ?? null : value;
+const outputUnits: Record<string, number> = { K: 1e3, M: 1e6, B: 1e9, T: 1e12, THOUSAND: 1e3, MILLION: 1e6, BILLION: 1e9, TRILLION: 1e12 };
 function outputMoney(value: any): string {
-  const raw = outputScalar(value);
+  const raw = value && typeof value === 'object' && typeof value.value === 'number' && Number.isFinite(value.value) ? value.value : outputScalar(value);
   if (raw === null || raw === undefined || raw === '—' || raw === '--') return 'null';
   const text = String(raw).replace(/[$,\s]/g, '');
-  const match = text.match(/^([+-]?[\d.]+)([KMBT])?$/i);
+  const match = text.match(/^([+-]?[\d.]+)(K|M|B|T|Thousand|Million|Billion|Trillion)?$/i);
   if (!match) return outputClean(raw);
-  const number = Number(match[1]) * ({ K: 1e3, M: 1e6, B: 1e9, T: 1e12 }[match[2]?.toUpperCase() as 'K' | 'M' | 'B' | 'T'] ?? 1);
+  const number = Number(match[1]) * (outputUnits[match[2]?.toUpperCase() ?? ''] ?? 1);
   if (!Number.isFinite(number)) return 'null';
   for (const [unit, scale] of [['T', 1e12], ['B', 1e9], ['M', 1e6], ['K', 1e3]] as const) {
     if (Math.abs(number) >= scale) return `$${(number / scale).toFixed(1)}${unit}`;
   }
   return `$${number.toFixed(2)}`;
+}
+/** Yields: rounded to 2 decimals without trailing zeros; placeholders are omitted like null. */
+function outputPercent(value: any): unknown {
+  const raw = outputScalar(value);
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? Number(raw.toFixed(2)) : null;
+  const text = String(raw).trim().replace(/%$/, '').trim();
+  if (['', '-', '—', '--', 'n/a'].includes(text.toLowerCase())) return null;
+  const number = Number(text.replace(/,/g, ''));
+  return Number.isFinite(number) ? Number(number.toFixed(2)) : outputClean(raw);
 }
 function outputFundLine(index: number, total: number, ticker: string, status: string, data: any = {}, reason?: unknown): string {
   const width = Math.max(2, String(total).length);
@@ -101,26 +121,41 @@ function outputFundLine(index: number, total: number, ticker: string, status: st
     field('yahoo', data.yahooHistoryCount),
   ].filter(part => part !== '').join(' ');
   const detail = [
-    field('port', data.portfolioId),
+    field('port', data.portId ?? data.portfolioId),
     field('history', outputCount(data.history ?? data.historyCount)),
     sources ? `(${sources})` : '',
     field('holdings', outputCount(data.holdings ?? data.holdingsCount)),
-    field('divs', outputCount(data.distributions)),
+    field('divs', outputCount(data.worksheets?.Distributions ?? data.distributions)),
     field('netAssets', outputMoney(data.netAssets ?? data.aum)),
-    field('div', outputScalar(data.dividendYield ?? metrics.dividendYield)),
-    field('sec', outputScalar(data.secYield ?? metrics.secYield)),
+    field('total', outputMoney(data.totalFundNetAssets ?? data.totalNetAssets)),
+    field('div', outputPercent(data.trailingYield ?? data.yields?.effectiveYield ?? data.yields?.dividendYield ?? data.dividendYield ?? metrics.dividendYield)),
+    field('sec', outputPercent(data.secYield ?? data.yields?.secYield ?? metrics.secYield)),
+    field('wp', data.workplaceRaw),
   ].filter(part => part !== '').join(' ');
   return `[ ${String(index).padStart(width)}/${String(total).padEnd(width)}  ] ${outputClean(ticker).padEnd(5)} ${status.padEnd(9)}${detail ? ` ${detail}` : ''}${reason ? ` reason=${outputClean(reason)}` : ''}`;
 }
 function outputCreateReporter(root: URL | string, total: number) {
   let completed = 0;
+  const tally = new Map<string, number>();
   return {
     before: (ticker: string) => outputInspectFund(root, ticker),
     async result(ticker: string, before: { digest: string }, status?: string, reason?: unknown, extra: any = {}) {
       const after = await outputInspectFund(root, ticker);
-      console.log(outputFundLine(++completed, total, ticker, status ?? (before.digest === after.digest ? 'unchanged' : 'updated'), { ...after.meta, ...extra }, reason));
+      const final = status ?? (before.digest === after.digest ? 'unchanged' : 'updated');
+      tally.set(final, (tally.get(final) ?? 0) + 1);
+      console.log(outputFundLine(++completed, total, ticker, final, { ...after.meta, ...extra }, reason));
+    },
+    /** First [ done ] line: the statuses of every fund line this reporter printed. */
+    summary(startedAt: number): string {
+      const order = ['updated', 'unchanged', 'kept', 'skipped', 'failed'];
+      const statuses = [...order, ...[...tally.keys()].filter(status => !order.includes(status))];
+      return `[ done     ] ${completed} fund${completed === 1 ? '' : 's'}: ${statuses.map(status => `${tally.get(status) ?? 0} ${status}`).join(', ')} in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
     },
   };
+}
+/** Second [ done ] line: published totals. */
+function outputCounts(funds: number, holdings: number, history: number): string {
+  return `[ done     ] counts: ${funds.toLocaleString('en-US')} funds / ${holdings.toLocaleString('en-US')} holdings rows / ${history.toLocaleString('en-US')} history rows`;
 }
 
 import { mkdir, readFile, writeFile, readdir, rm, appendFile, rename } from 'node:fs/promises';
@@ -580,6 +615,9 @@ async function paceRequests(url: string): Promise<void> {
 // one source answer must not turn the weekly job red forever; exit 1 is for "nothing answered".
 let answeredRequests = 0;
 let issuerUnreachable = false;
+// One-off source notices print directly before the fund list and VERBOSE-only once fund lines are printing.
+let fundListStarted = false;
+function sourceNotice(message: string): void { if (fundListStarted) outputNote(message); else console.warn(message); }
 export function runHealth(): { answered: number; issuerUnreachable: boolean } {
   return { answered: answeredRequests, issuerUnreachable };
 }
@@ -683,7 +721,7 @@ async function fetchIssuerViaProxy(url: string, label: string, config: UpdaterCo
   } catch (error) {
     if (markUnreachable && error instanceof HttpError && [403, 429].includes(error.status) && !issuerUnreachable) {
       issuerUnreachable = true;
-      console.warn(`[ issuer   ] unreachable from here (direct and proxy denied) - the issuer is skipped for the rest of this run; SEC EDGAR and Yahoo carry the feed`);
+      sourceNotice(`[ issuer   ] unreachable from here (direct and proxy denied) - the issuer is skipped for the rest of this run; SEC EDGAR and Yahoo carry the feed`);
     }
     throw error;
   }
@@ -702,7 +740,7 @@ async function fetchIssuerText(url: string, label: string, config: UpdaterConfig
     issuerDirectDenials += 1;
     if (issuerDirectDenials < ISSUER_DENIAL_LIMIT) throw error;
     issuerProxyOnly = true;
-    console.warn(`[ issuer   ] ${label}: ${errorMessage(error)} - switching to the read-only rendering proxy for the rest of this run`);
+    sourceNotice(`[ issuer   ] ${label}: ${errorMessage(error)} - switching to the read-only rendering proxy for the rest of this run`);
     return fetchIssuerViaProxy(url, label, config);
   }
 }
@@ -746,7 +784,7 @@ export async function fetchSecText(url: string, label: string, config: UpdaterCo
     secDirectDenials += 1;
     if (secDirectDenials < SEC_DENIAL_LIMIT) throw error;
     secProxyOnly = true;
-    console.warn(`[ edgar    ] ${errorMessage(error)} — switching to the read-only rendering proxy for the rest of this run`);
+    sourceNotice(`[ edgar    ] ${errorMessage(error)} — switching to the read-only rendering proxy for the rest of this run`);
     const response = await fetchWithRetry(secProxyUrl(url), `${label} (proxy)`, { headers: secProxyHeaders(config, kind) }, config.maxRetries);
     return proxyPayload(await response.text(), kind);
   }
@@ -2676,10 +2714,10 @@ function loadFundTickerMap(config: UpdaterConfig): Promise<Map<string, SecSeries
     try {
       const payload = await fetchSecJson(SEC_FUND_TICKERS_URL, '[edgar   ] fund ticker table', config);
       const map = parseFundTickerMap(payload);
-      outputNote(`[ edgar    ] SEC fund ticker table: ${map.size} ETF / mutual-fund share classes`);
+      outputNote(`[ edgar    ] SEC fund ticker table: ${Array.isArray(payload?.data) ? payload.data.length : map.size} ETF / mutual-fund share classes`);
       return map;
     } catch (error) {
-      console.warn(`[ edgar    ] fund ticker table: ${errorMessage(error)} — falling back to full-text search`);
+      outputNote(`[ edgar    ] fund ticker table: ${errorMessage(error)} — falling back to full-text search`);
       return new Map<string, SecSeriesRef>();
     }
   })();
@@ -2691,10 +2729,10 @@ function loadCompanyTickerMap(config: UpdaterConfig): Promise<Map<string, string
     try {
       const payload = await fetchSecJson(SEC_COMPANY_TICKERS_URL, '[edgar   ] company ticker table', config);
       const map = parseCompanyTickerMap(payload);
-      outputNote(`[ edgar    ] SEC company ticker table: ${map.size} issuer names`);
+      outputNote(`[ edgar    ] SEC company ticker table: ${Object.keys(payload ?? {}).length} issuer names`);
       return map;
     } catch (error) {
-      console.warn(`[ edgar    ] company ticker table: ${errorMessage(error)} — N-PORT tickers stay "-"`);
+      outputNote(`[ edgar    ] company ticker table: ${errorMessage(error)} — N-PORT tickers stay "-"`);
       return new Map<string, string>();
     }
   })();
@@ -3550,6 +3588,7 @@ export function batchSelection(funds: CatalogFund[], config: UpdaterConfig, curs
 }
 
 async function main(): Promise<void> {
+  const startedAt = Date.now();
   const controls = await runtimeControls(process.env);
   if (controls.VERBOSE !== undefined) process.env.VERBOSE = controls.VERBOSE;
   installSystemCa(controls.USE_SYSTEM_CA ?? 'auto');
@@ -3559,7 +3598,6 @@ async function main(): Promise<void> {
   discoveryGate = createRequestGate(requestSleepMs);
   configureProxyGate(Math.max(requestSleepMs, PROXY_SLEEP_SECONDS * 1000));
   outputPrintConfig('Parametric', config);
-  console.log('');
   const catalog = new Map<string, CatalogFund>();
   const previousIndex = await readPreviousIndex();
   for (const [ticker, row] of previousIndex) catalog.set(ticker, catalogFundFromIndex(ticker, row));
@@ -3601,7 +3639,9 @@ async function main(): Promise<void> {
   if (!universe.length) throw new Error('No verified issuer catalog or published seed available');
   console.log(`[ catalog  ] ${universe.length} Parametric ETFs (${catalogSource})`);
 
-  const state = await readUpdateState();
+  // A TICKERS run never reads, writes or deletes the cursor (First-Trust rule).
+  const useCursor = !config.tickers.length;
+  const state = useCursor ? await readUpdateState() : null;
   // A plain `bun ./scripts/update-data.ts` (no MAX_FETCHES) always walks the
   // whole catalog from the top and clears the cursor afterwards; the saved
   // cursor only rotates the queue for explicitly bounded batch runs.
@@ -3611,8 +3651,9 @@ async function main(): Promise<void> {
   const succeeded = new Set<string>();
   let failures = 0;
 
-  outputPrintFilter(selected.length, universe.length, outputHasOutputFilters(config));
+  outputPrintFilter(selected.length, universe.length, outputHasOutputFilters({ ...config, tickers: [] }));
   const output = outputCreateReporter(API_ROOT, selected.length);
+  fundListStarted = true;
   // Soft deadline: stop taking new funds after 25 minutes so the index is still written before the 30 minute job limit.
   const deadline = Date.now() + 25 * 60_000;
   await runPool(selected, config.concurrency, requestSleepMs, async (fund) => {
@@ -3658,18 +3699,18 @@ async function main(): Promise<void> {
   });
 
   // Full passes reset the cursor: the next run starts from the top again.
-  await writeUpdateState(lastProcessedTicker, config);
+  if (useCursor) await writeUpdateState(lastProcessedTicker, config);
 
-  console.log('');
-  console.log(`[ done     ] ${results.length} funds updated, ${keptFromPrevious.length} kept from previous runs, ${failures} failures`);
-  console.log(`[ done     ] counts: ${counts.funds} funds / ${counts.holdings.toLocaleString('en-US')} holdings rows / ${counts.history.toLocaleString('en-US')} history rows`);
+  const failed = runFailed(selected.length, failures, runHealth().answered);
+  if (!failed && failures) console.warn(`[ kept     ] ${failures} fund(s) kept as published because their sources failed; ${runHealth().answered} requests were answered, so the run stays green`);
+  console.log(output.summary(startedAt));
+  console.log(outputCounts(counts.funds, counts.holdings, counts.history));
   console.log(
-    `[ cursor   ] ${config.maxFetches > 0 && lastProcessedTicker ? `next run continues after ${lastProcessedTicker}` : 'full pass complete (cursor reset)'}`,
+    `[ cursor   ] ${!useCursor ? 'TICKERS run: cursor untouched' : config.maxFetches > 0 && lastProcessedTicker ? `next run continues after ${lastProcessedTicker}` : 'full pass complete (cursor reset)'}`,
   );
 
   // Red only when nothing could be refreshed AND no source answered at all; a partial outage that kept every published fund stays green.
-  if (runFailed(selected.length, failures, runHealth().answered)) process.exitCode = 1;
-  else if (failures) console.warn(`[ done     ] ${failures} fund(s) kept as published because their sources failed; ${runHealth().answered} requests were answered, so the run stays green`);
+  if (failed) process.exitCode = 1;
   if (process.env.GITHUB_STEP_SUMMARY) {
     await appendFile(
       process.env.GITHUB_STEP_SUMMARY,

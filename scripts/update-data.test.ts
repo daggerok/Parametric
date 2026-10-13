@@ -870,6 +870,20 @@ describe('pipeline', () => {
     });
   });
 
+  test('a TICKERS run leaves update-state.json byte-identical', () => {
+    withSandbox(({ dir, run }) => {
+      expect(run({ MAX_FETCHES: '1' }).exitCode).toBe(0);
+      const state = join(dir, 'api/parametric/update-state.json');
+      const before = readFileSync(state, 'utf8');
+      const bounded = run({ TICKERS: 'PEPS', MAX_FETCHES: '1' });
+      expect(bounded.exitCode).toBe(0);
+      expect(bounded.stdout).toContain('[ cursor   ] TICKERS run: cursor untouched');
+      expect(readFileSync(state, 'utf8')).toBe(before);
+      expect(run({ TICKERS: 'PEPS' }).exitCode).toBe(0);
+      expect(readFileSync(state, 'utf8')).toBe(before);
+    });
+  });
+
   test('a one-ticker run keeps every published row and file', () => {
     withSandbox(({ run, files, freeze, rewritten }) => {
       run();
