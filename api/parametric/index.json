@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-10-11T02:56:32Z",
+ "generatedAt": "2026-10-13T02:14:20Z",
  "source": {
   "provider": "Eaton Vance / MSIM product pages (ETF catalog, fund facts, returns and distributions); SEC EDGAR Form N-PORT-P holdings; Yahoo Finance chart API (daily NAV history and dividends)",
   "site": "https://www.eatonvance.com",
@@ -9,7 +9,7 @@
  "counts": {
   "funds": 3,
   "holdings": 572,
-  "history": 1862
+  "history": 1865
  },
  "funds": [
   {
@@ -85,13 +85,13 @@
     "dividendYield": 7.94,
     "dividendYieldText": "7.94%",
     "dividendYieldBasis": "indicated",
-    "secYield": 2.77,
-    "secYieldText": "2.77%",
+    "secYield": 2.78,
+    "secYieldText": "2.78%",
     "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)",
     "performanceAsOf": "2026-09-30"
    },
    "holdings": 194,
-   "history": 746
+   "history": 747
   },
   {
    "ticker": "PEPS",
@@ -172,7 +172,7 @@
     "performanceAsOf": "2026-09-30"
    },
    "holdings": 192,
-   "history": 370
+   "history": 371
   },
   {
    "ticker": "PHEQ",
@@ -253,7 +253,7 @@
     "performanceAsOf": "2026-09-30"
    },
    "holdings": 186,
-   "history": 746
+   "history": 747
   }
  ]
 }
