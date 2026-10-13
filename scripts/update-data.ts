@@ -3199,7 +3199,10 @@ async function processFund(
   if (!history.length && !holdingsRows.length) {
     throw new Error('No holdings or history available; fund not published');
   }
-  const chartDays = chart?.days.length ? chart.days : chartDaysFromRows(history);
+  // Returns are derived from the same kept cents the history pages publish, so Yahoo's float noise
+  // can flip neither a stored Adj Close nor a stored return.
+  const keptAdj = new Map(chartDaysFromRows(history).map((day) => [day.date, day.adjClose]));
+  const chartDays = chart?.days.length ? chart.days.map((day) => ({ ...day, adjClose: keptAdj.get(day.date) ?? day.adjClose })) : chartDaysFromRows(history);
   const derived = chartDays.length ? priceReturns(chartDays, new Date(), coveredFrom) : EMPTY_PRICE_RETURNS;
 
   // 4) Distributions: the published schedule wins; Yahoo dividends fill the gaps.
