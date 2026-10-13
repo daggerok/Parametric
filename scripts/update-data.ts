@@ -3639,7 +3639,9 @@ async function main(): Promise<void> {
   if (!universe.length) throw new Error('No verified issuer catalog or published seed available');
   console.log(`[ catalog  ] ${universe.length} Parametric ETFs (${catalogSource})`);
 
-  const state = await readUpdateState();
+  // A TICKERS run never reads, writes or deletes the cursor (First-Trust rule).
+  const useCursor = !config.tickers.length;
+  const state = useCursor ? await readUpdateState() : null;
   // A plain `bun ./scripts/update-data.ts` (no MAX_FETCHES) always walks the
   // whole catalog from the top and clears the cursor afterwards; the saved
   // cursor only rotates the queue for explicitly bounded batch runs.
@@ -3697,14 +3699,14 @@ async function main(): Promise<void> {
   });
 
   // Full passes reset the cursor: the next run starts from the top again.
-  await writeUpdateState(lastProcessedTicker, config);
+  if (useCursor) await writeUpdateState(lastProcessedTicker, config);
 
   const failed = runFailed(selected.length, failures, runHealth().answered);
   if (!failed && failures) console.warn(`[ kept     ] ${failures} fund(s) kept as published because their sources failed; ${runHealth().answered} requests were answered, so the run stays green`);
   console.log(output.summary(startedAt));
   console.log(outputCounts(counts.funds, counts.holdings, counts.history));
   console.log(
-    `[ cursor   ] ${config.maxFetches > 0 && lastProcessedTicker ? `next run continues after ${lastProcessedTicker}` : 'full pass complete (cursor reset)'}`,
+    `[ cursor   ] ${!useCursor ? 'TICKERS run: cursor untouched' : config.maxFetches > 0 && lastProcessedTicker ? `next run continues after ${lastProcessedTicker}` : 'full pass complete (cursor reset)'}`,
   );
 
   // Red only when nothing could be refreshed AND no source answered at all; a partial outage that kept every published fund stays green.
