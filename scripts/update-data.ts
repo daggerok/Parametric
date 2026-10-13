@@ -11,19 +11,23 @@ import { fileURLToPath as outputFileURLToPath } from 'node:url';
 
 const outputClean = (value: unknown): string => String(value ?? 'null').replace(/[\r\n\t]+/g, ' ');
 /** Presentation only: per-fund retry and fallback notices are printed when VERBOSE is enabled. */
-const outputVerbose = (): boolean => /^(1|true|yes|y|on)$/i.test((globalThis as any).process?.env?.VERBOSE ?? '');
+const outputVerbose = (): boolean => /^(1|true|yes|on)$/i.test((globalThis as any).process?.env?.VERBOSE ?? '');
 function outputNote(message: string): void { if (outputVerbose()) console.warn(message); }
 /** Names are the canonical environment knobs, not internal parser properties. */
 function outputConfigEntries(config: Record<string, any>): [string, string][] {
   const values = new Map<string, string>();
   const aliases: Record<string, string> = {
-    requestSleep: 'REQUEST_SLEEP', catalogUrl: 'CATALOG_URL',
+    requestSleepSeconds: 'REQUEST_SLEEP', categories: 'CATEGORY',
     aumRange: 'AUM', terRange: 'TER', dividendYieldRange: 'DIVIDEND_YIELD', secYieldRange: 'SEC_YIELD',
     performanceRanges: 'PERFORMANCE', totalReturnRanges: 'TOTAL_RETURN',
+    skipVanEck: 'SKIP_VANECK', skipProShares: 'SKIP_PROSHARES',
+    skipWisdomTree: 'SKIP_WISDOMTREE', skipGoldmanSachs: 'SKIP_GOLDMANSACHS',
+    skipGlobalX: 'SKIP_GLOBALX', skipNorthernTrust: 'SKIP_NORTHERNTRUST',
   };
-  const range = (v: any): string => v?.source ?? `${Number.isFinite(v?.min) ? v.min : ''}:${Number.isFinite(v?.max) ? v.max : ''}`;
+  const range = (v: any): string => typeof v === 'string' ? v : v?.source ?? `${Number.isFinite(v?.min) ? v.min : ''}:${Number.isFinite(v?.max) ? v.max : ''}`;
   for (const [key, value] of Object.entries(config)) {
-    const name = aliases[key] ?? key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase();
+    if (['proxyGapMs', 'fetchTimeoutMs', 'retryDelayMs'].includes(key)) continue;
+    const name = aliases[key] ?? (/^[A-Z0-9_]+$/.test(key) ? key : key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase());
     if (name === 'PERFORMANCE' || name === 'TOTAL_RETURN') {
       for (const period of ['YTD', '1Y', '3Y', '5Y', '10Y']) values.set(`${name}_${period}`, range(value?.[period]));
     } else if (['AUM', 'TER', 'DIVIDEND_YIELD', 'SEC_YIELD'].includes(name)) {
@@ -117,14 +121,16 @@ function outputFundLine(index: number, total: number, ticker: string, status: st
     field('yahoo', data.yahooHistoryCount),
   ].filter(part => part !== '').join(' ');
   const detail = [
-    field('port', data.portfolioId),
+    field('port', data.portId ?? data.portfolioId),
     field('history', outputCount(data.history ?? data.historyCount)),
     sources ? `(${sources})` : '',
     field('holdings', outputCount(data.holdings ?? data.holdingsCount)),
-    field('divs', outputCount(data.distributions)),
+    field('divs', outputCount(data.worksheets?.Distributions ?? data.distributions)),
     field('netAssets', outputMoney(data.netAssets ?? data.aum)),
-    field('div', outputPercent(data.dividendYield ?? metrics.dividendYield)),
-    field('sec', outputPercent(data.secYield ?? metrics.secYield)),
+    field('total', outputMoney(data.totalFundNetAssets ?? data.totalNetAssets)),
+    field('div', outputPercent(data.trailingYield ?? data.yields?.effectiveYield ?? data.yields?.dividendYield ?? data.dividendYield ?? metrics.dividendYield)),
+    field('sec', outputPercent(data.secYield ?? data.yields?.secYield ?? metrics.secYield)),
+    field('wp', data.workplaceRaw),
   ].filter(part => part !== '').join(' ');
   return `[ ${String(index).padStart(width)}/${String(total).padEnd(width)}  ] ${outputClean(ticker).padEnd(5)} ${status.padEnd(9)}${detail ? ` ${detail}` : ''}${reason ? ` reason=${outputClean(reason)}` : ''}`;
 }
