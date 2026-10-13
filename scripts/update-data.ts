@@ -956,7 +956,8 @@ export type ProductData = {
 };
 export type IssuerSection = 'detail' | 'pricing' | 'returns' | 'yields' | 'distribution';
 
-export type ChartDay = { date: string; close: number; adjClose: number; volume: number };
+// adjCloseRaw: Yahoo's unrounded value, only used to tell float noise from a real change (never persisted).
+export type ChartDay = { date: string; close: number; adjClose: number; volume: number; adjCloseRaw?: number };
 export type ParsedChart = {
   exchangeName: string;
   longName: string;
@@ -1471,6 +1472,7 @@ export function parseChart(payload: JsonRecord): ParsedChart {
       // meaningful precision for a price and absorbs that jitter.
       adjClose: round(adjClose, 2),
       volume: typeof volumes[i] === 'number' ? (volumes[i] as number) : 0,
+      adjCloseRaw: adjClose,
     });
   }
   const events = ((result.events || {}) as JsonRecord).dividends as Record<string, JsonRecord> | undefined;
@@ -2572,25 +2574,24 @@ function historyRows(days: ChartDay[]): JsonRecord[] {
   }));
 }
 
+// Yahoo's adjusted close is float32 and its last digits move with the request's period2, so a value
+// sitting on a cent boundary (31.544998 vs 31.545001) flips between runs. Within that noise the
+// published cent is kept: a rerun with the same source data changes nothing.
+export const ADJ_CLOSE_NOISE = 1e-4;
+
 export function mergeHistory(previous: JsonRecord[], fresh: ChartDay[]): JsonRecord[] {
   const byDate = new Map<string, JsonRecord>();
   for (const row of previous) {
     const epoch = Date.parse(String(row.Date));
     if (Number.isFinite(epoch)) byDate.set(new Date(epoch).toISOString().slice(0, 10), row);
   }
-  for (const row of historyRows(fresh)) {
-    const key = new Date(Date.parse(row.Date)).toISOString().slice(0, 10);
-    const published = byDate.get(key);
-    // Yahoo recomputes adjusted closes on every request. A value that sits on
-    // a .xx5 rounding boundary flips the published cent back and forth between
-    // otherwise identical requests, and the feed would churn on every run.
-    // A published row therefore keeps its cent while the fresh value moves by
-    // less than two cents; a genuine restatement or dividend adjustment is
-    // larger and replaces the row normally.
-    const freshAdj = numberOrNull(row['Adj Close']);
+  for (const day of fresh) {
+    const [row] = historyRows([day]);
+    const published = byDate.get(day.date);
     const publishedAdj = published ? numberOrNull(published['Adj Close']) : null;
-    if (freshAdj !== null && publishedAdj !== null && Math.abs(freshAdj - publishedAdj) < 0.02) row['Adj Close'] = published!['Adj Close'];
-    byDate.set(key, row);
+    const raw = day.adjCloseRaw ?? day.adjClose;
+    if (publishedAdj !== null && row['Adj Close'] !== published!['Adj Close'] && Math.abs(raw - publishedAdj) <= 0.005 + ADJ_CLOSE_NOISE) row['Adj Close'] = published!['Adj Close'];
+    byDate.set(day.date, row);
   }
   return [...byDate].sort(([a], [b]) => a.localeCompare(b)).map(([, row]) => row);
 }
@@ -3198,7 +3199,10 @@ async function processFund(
   if (!history.length && !holdingsRows.length) {
     throw new Error('No holdings or history available; fund not published');
   }
-  const chartDays = chart?.days.length ? chart.days : chartDaysFromRows(history);
+  // Returns are derived from the same kept cents the history pages publish, so Yahoo's float noise
+  // can flip neither a stored Adj Close nor a stored return.
+  const keptAdj = new Map(chartDaysFromRows(history).map((day) => [day.date, day.adjClose]));
+  const chartDays = chart?.days.length ? chart.days.map((day) => ({ ...day, adjClose: keptAdj.get(day.date) ?? day.adjClose })) : chartDaysFromRows(history);
   const derived = chartDays.length ? priceReturns(chartDays, new Date(), coveredFrom) : EMPTY_PRICE_RETURNS;
 
   // 4) Distributions: the published schedule wins; Yahoo dividends fill the gaps.

@@ -9,7 +9,7 @@ import {
   CONTROL_NAMES, PARAMETRIC_FUND_SLUGS, PARAMETRIC_PRODUCT_IDS, annualizedToTotal, batchSelection, chartUrl, cleanHoldingTicker,
   configureProxyGate, createRequestGate, cursorScope, deriveCatalogMetrics, eftsSearchUrl, fetchSecJson, fetchSecText, fetchWithRetry,
   fundFilterReasons, holdingsDownloadUrl, indicatedYield, inferDistributionFrequency, installSystemCa, isCertError, isParametricFundUrl,
-  isoFromEdgar, issuerFrequency, issuerFundUrl, lastCompletedQuarterEnd, loadIssuerApi, mergeHistory, nextCursor,
+  isoFromEdgar, issuerFrequency, issuerFundUrl, lastCompletedQuarterEnd, loadIssuerApi, mergeHistory, ADJ_CLOSE_NOISE, nextCursor,
   normalizeHoldingName, normalizeHoldingNameCore, normalizeSource, nportBelongsToFund, nportUrlFor, officialReturnsFor, parseAumRange,
   parseChart, parseCompanyTickerMap, parseEdgarAtomFilings, parseFundTickerMap, parseHoldingsCsv, parseIssuerApi, parseIssuerCatalog,
   parseIssuerDistributions, parseIssuerProduct, parseIssuerReturnsTable, parseKeyFacts, parseNport, parseNportAccessions, parseRange,
@@ -621,11 +621,11 @@ describe('parsing', () => {
     expect(() => parseChart({ chart: { result: [] } })).toThrow(/empty result/);
   });
 
-  test('Yahoo: history merges in date order, a published cent survives jitter, a real restatement wins', () => {
-    const day = (date: string, adjClose: number) => ({ date, close: 26.28, adjClose, volume: 85084 });
+  test('Yahoo: history merges in date order, a published cent survives float noise only, a real change of one cent wins', () => {
+    const day = (date: string, adjCloseRaw: number) => ({ date, close: 26.28, adjClose: Math.round(adjCloseRaw * 100) / 100, volume: 85084, adjCloseRaw });
     const previous = [{ Date: 'Sep 30 2026', Close: '26.28', 'Adj Close': '25.19', Volume: '85084' }];
-    expect(mergeHistory(previous, [day('2026-09-30', 25.2)])[0]['Adj Close']).toBe('25.19');
-    expect(mergeHistory(previous, [day('2026-09-30', 25.42)])[0]['Adj Close']).toBe('25.42');
+    expect(ADJ_CLOSE_NOISE).toBe(1e-4);
+    expect([25.195001, 25.1952, 25.2, 25.42].map((raw) => mergeHistory(previous, [day('2026-09-30', raw)])[0]['Adj Close'])).toEqual(['25.19', '25.2', '25.2', '25.42']);
     const merged = mergeHistory([{ Date: 'Oct 16 2023', Close: '25.00', 'Adj Close': '24.00', Volume: '1' }], [day('2026-09-29', 25.1), day('2026-09-30', 25.2)]);
     expect(merged.map((row) => row.Date)).toEqual(['Oct 16 2023', 'Sep 29 2026', 'Sep 30 2026']);
   });
@@ -754,6 +754,12 @@ const failing = JSON.parse(process.env.MOCK_FAIL || '[]');
 globalThis.fetch = async (input) => {
   const url = String(input);
   if (failing.some((part) => url.includes(part))) return new Response('boom', { status: 500 });
+  // MOCK_CHART: { timestamp, close, adjclose } replacing the Yahoo daily series (float32 noise around a cent boundary)
+  if (url.startsWith('https://query1.finance.yahoo.com/') && process.env.MOCK_CHART) {
+    const series = JSON.parse(process.env.MOCK_CHART);
+    fixtures.yahoo.chart.result[0].timestamp = series.timestamp;
+    fixtures.yahoo.chart.result[0].indicators = { quote: [{ close: series.close, volume: series.close.map(() => 100) }], adjclose: [{ adjclose: series.adjclose }] };
+  }
   if (url.startsWith('https://query1.finance.yahoo.com/')) return new Response(JSON.stringify(fixtures.yahoo));
   if (process.env.MOCK_ISSUER_DENIED === '1' && /eatonvance\\.com/.test(url)) return new Response('Access Denied', { status: 403 });
   for (const [part, body] of fixtures.sec) if (url.includes(part)) return new Response(body);
@@ -867,6 +873,28 @@ describe('pipeline', () => {
       expect(run().exitCode).toBe(0);
       expect(files()).toEqual(first);
       expect(rewritten()).toEqual([]);
+    });
+  });
+
+  test('two runs on the same source data write zero changes even when Yahoo adjusted closes jitter across a cent boundary', () => {
+    withSandbox(({ run, files, freeze, rewritten }) => {
+      // Yahoo float32 noise seen live: SPDV 2024-11-12 came back as 31.544998 and 31.545001 a minute apart.
+      // The first day anchors the derived 3y CAGR (the issuer publishes no 3y return), where one cent moves the rounded value by ~0.02
+      const day = (daysAgo: number): number => Math.floor(Date.now() / 86_400_000 - daysAgo) * 86_400 + 48_600;
+      const chart = (adjclose: number[]): Record<string, string> => ({ MOCK_CHART: JSON.stringify({ timestamp: [day(3 * 365 + 10), day(10), day(3)], close: [21, 26, 31], adjclose }) });
+      const returns = (published: Record<string, string>) => [JSON.parse(published['funds/PAPI/meta.json']).returns, indexRows(published).find((row) => row.ticker === 'PAPI').metrics];
+      expect(run(chart([20.005001, 25.994999, 30])).exitCode).toBe(0);
+      const first = files();
+      expect(indexRows(first).find((row) => row.ticker === 'PAPI').metrics.cagr3y).not.toBeNull();
+      freeze();
+      expect(run(chart([20.004998, 25.995002, 30])).exitCode).toBe(0);
+      expect(returns(files())).toEqual(returns(first));
+      expect(files()).toEqual(first);
+      expect(rewritten()).toEqual([]);
+      // a real change of one cent is still written
+      expect(run(chart([20.02, 25.98, 30])).exitCode).toBe(0);
+      expect(files()).not.toEqual(first);
+      expect(JSON.parse(files()['funds/PAPI/history/001.json']).rows.map((row: Record<string, string>) => row['Adj Close'])).toEqual(['20.02', '25.98', '30']);
     });
   });
 
