@@ -3643,7 +3643,7 @@ async function main(): Promise<void> {
   const succeeded = new Set<string>();
   let failures = 0;
 
-  outputPrintFilter(selected.length, universe.length, outputHasOutputFilters(config));
+  outputPrintFilter(selected.length, universe.length, outputHasOutputFilters({ ...config, tickers: [] }));
   const output = outputCreateReporter(API_ROOT, selected.length);
   fundListStarted = true;
   // Soft deadline: stop taking new funds after 25 minutes so the index is still written before the 30 minute job limit.
