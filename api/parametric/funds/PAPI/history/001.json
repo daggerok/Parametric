@@ -2,7 +2,7 @@
  "ticker": "PAPI",
  "page": 1,
  "pageSize": 1000,
- "totalRows": 747,
+ "totalRows": 751,
  "headers": [
   "Date",
   "Close",
@@ -4491,6 +4491,30 @@
    "Close": "26.93",
    "Adj Close": "26.93",
    "Volume": "36700"
+  },
+  {
+   "Date": "Oct 13 2026",
+   "Close": "27.059999",
+   "Adj Close": "27.06",
+   "Volume": "60700"
+  },
+  {
+   "Date": "Oct 14 2026",
+   "Close": "27.18",
+   "Adj Close": "27.18",
+   "Volume": "42600"
+  },
+  {
+   "Date": "Oct 15 2026",
+   "Close": "27.440001",
+   "Adj Close": "27.44",
+   "Volume": "120800"
+  },
+  {
+   "Date": "Oct 16 2026",
+   "Close": "27.549999",
+   "Adj Close": "27.55",
+   "Volume": "48100"
   }
  ]
 }

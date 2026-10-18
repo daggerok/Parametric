@@ -30,43 +30,43 @@
   "display": "0.29%",
   "grossDisplay": "0.29%",
   "netDisplay": "0.29%",
-  "asOf": "Oct 09 2026",
+  "asOf": "Oct 16 2026",
   "source": "official Eaton Vance / MSIM product data (net and gross expense ratio; terValue is the net ratio)"
  },
  "nav": {
-  "display": "$35.81",
-  "value": 35.8103,
-  "asOfDate": "2026-10-09",
+  "display": "$35.51",
+  "value": 35.5082,
+  "asOfDate": "2026-10-16",
   "source": "official Eaton Vance / MSIM product data (pricing)"
  },
  "marketPrice": {
-  "display": "$35.84",
-  "value": 35.84,
-  "asOfDate": "2026-10-09",
+  "display": "$35.50",
+  "value": 35.5,
+  "asOfDate": "2026-10-16",
   "source": "official Eaton Vance / MSIM product data (market price)"
  },
  "premiumDiscount": {
-  "display": "0.08%",
-  "value": 0.08,
-  "asOfDate": "2026-10-09",
+  "display": "-0.02%",
+  "value": -0.02,
+  "asOfDate": "2026-10-16",
   "source": "computed from the issuer NAV and market price of the same date",
-  "amount": 0.03
+  "amount": -0.01
  },
  "bidAskSpread": {
-  "display": "0.28%",
-  "value": 0.28,
-  "asOfDate": "2026-10-09",
+  "display": "0.31%",
+  "value": 0.31,
+  "asOfDate": "2026-10-16",
   "source": "official Eaton Vance / MSIM product data (median bid/ask spread)"
  },
  "aum": {
-  "display": "$152.19 M",
-  "value": 152193775,
-  "asOfDate": "Oct 09 2026",
+  "display": "$149.13 M",
+  "value": 149134440,
+  "asOfDate": "Oct 16 2026",
   "source": "derived: shares outstanding x NAV (the issuer publishes no net assets figure)"
  },
  "yields": {
-  "dividendYield": 0.54,
-  "dividendYieldText": "0.54%",
+  "dividendYield": 0.55,
+  "dividendYieldText": "0.55%",
   "dividendYieldBasis": "indicated",
   "dividendYieldKind": "indicated (latest distribution x payments per year / market price)",
   "secYield": 0.82,
@@ -182,8 +182,8 @@
    "history/001.json"
   ],
   "pageSize": 1000,
-  "totalRows": 747,
-  "asOf": "Oct 12 2026",
+  "totalRows": 751,
+  "asOf": "Oct 16 2026",
   "source": "Yahoo Finance public chart API (adjusted close)"
  }
 }

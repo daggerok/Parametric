@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-10-13T06:18:07Z",
+ "generatedAt": "2026-10-18T02:09:37Z",
  "source": {
   "provider": "Eaton Vance / MSIM product pages (ETF catalog, fund facts, returns and distributions); SEC EDGAR Form N-PORT-P holdings; Yahoo Finance chart API (daily NAV history and dividends)",
   "site": "https://www.eatonvance.com",
@@ -9,7 +9,7 @@
  "counts": {
   "funds": 3,
   "holdings": 572,
-  "history": 1865
+  "history": 1877
  },
  "funds": [
   {
@@ -26,17 +26,17 @@
    "terValue": 0.29,
    "terGross": "0.29%",
    "terGrossValue": 0.29,
-   "nav": "$26.83",
-   "navValue": 26.8339,
-   "aum": "$505.82 M",
-   "aumValue": 505819015,
-   "aumAsOfDate": "Oct 12 2026",
-   "asOfDate": "Oct 12 2026",
+   "nav": "$27.51",
+   "navValue": 27.5092,
+   "aum": "$521.30 M",
+   "aumValue": 521299340,
+   "aumAsOfDate": "Oct 16 2026",
+   "asOfDate": "Oct 16 2026",
    "inceptionDate": "Oct 16 2023",
-   "closePrice": "$26.93",
-   "closePriceValue": 26.93,
-   "premiumDiscount": "0.36%",
-   "premiumDiscountValue": 0.36,
+   "closePrice": "$27.55",
+   "closePriceValue": 27.55,
+   "premiumDiscount": "0.15%",
+   "premiumDiscountValue": 0.15,
    "distributions": {
     "frequency": "Monthly",
     "exDate": "09/30/2026",
@@ -82,16 +82,16 @@
     "cagr5y": null,
     "cagr10y": null,
     "siAnn": 9.4,
-    "dividendYield": 7.87,
-    "dividendYieldText": "7.87%",
+    "dividendYield": 7.7,
+    "dividendYieldText": "7.70%",
     "dividendYieldBasis": "indicated",
-    "secYield": 2.78,
-    "secYieldText": "2.78%",
+    "secYield": 2.71,
+    "secYieldText": "2.71%",
     "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)",
     "performanceAsOf": "2026-09-30"
    },
    "holdings": 194,
-   "history": 747
+   "history": 751
   },
   {
    "ticker": "PEPS",
@@ -107,17 +107,17 @@
    "terValue": 0.1,
    "terGross": "0.29%",
    "terGrossValue": 0.29,
-   "nav": "$33.69",
-   "navValue": 33.6902,
-   "aum": "$30.32 M",
-   "aumValue": 30321213.69,
-   "aumAsOfDate": "Oct 09 2026",
-   "asOfDate": "Oct 09 2026",
+   "nav": "$32.93",
+   "navValue": 32.9254,
+   "aum": "$29.63 M",
+   "aumValue": 29632892.93,
+   "aumAsOfDate": "Oct 16 2026",
+   "asOfDate": "Oct 16 2026",
    "inceptionDate": "Nov 07 2024",
-   "closePrice": "$33.70",
-   "closePriceValue": 33.7,
-   "premiumDiscount": "0.03%",
-   "premiumDiscountValue": 0.03,
+   "closePrice": "$32.94",
+   "closePriceValue": 32.94,
+   "premiumDiscount": "0.04%",
+   "premiumDiscountValue": 0.04,
    "distributions": {
     "frequency": "Quarterly",
     "exDate": "09/21/2026",
@@ -163,8 +163,8 @@
     "cagr5y": null,
     "cagr10y": null,
     "siAnn": 16.67,
-    "dividendYield": 1.01,
-    "dividendYieldText": "1.01%",
+    "dividendYield": 1.04,
+    "dividendYieldText": "1.04%",
     "dividendYieldBasis": "indicated",
     "secYield": 1.01,
     "secYieldText": "1.01%",
@@ -172,7 +172,7 @@
     "performanceAsOf": "2026-09-30"
    },
    "holdings": 192,
-   "history": 371
+   "history": 375
   },
   {
    "ticker": "PHEQ",
@@ -188,17 +188,17 @@
    "terValue": 0.29,
    "terGross": "0.29%",
    "terGrossValue": 0.29,
-   "nav": "$35.81",
-   "navValue": 35.8103,
-   "aum": "$152.19 M",
-   "aumValue": 152193775,
-   "aumAsOfDate": "Oct 09 2026",
-   "asOfDate": "Oct 09 2026",
+   "nav": "$35.51",
+   "navValue": 35.5082,
+   "aum": "$149.13 M",
+   "aumValue": 149134440,
+   "aumAsOfDate": "Oct 16 2026",
+   "asOfDate": "Oct 16 2026",
    "inceptionDate": "Oct 16 2023",
-   "closePrice": "$35.84",
-   "closePriceValue": 35.84,
-   "premiumDiscount": "0.08%",
-   "premiumDiscountValue": 0.08,
+   "closePrice": "$35.50",
+   "closePriceValue": 35.5,
+   "premiumDiscount": "-0.02%",
+   "premiumDiscountValue": -0.02,
    "distributions": {
     "frequency": "Quarterly",
     "exDate": "09/21/2026",
@@ -244,8 +244,8 @@
     "cagr5y": null,
     "cagr10y": null,
     "siAnn": 14.08,
-    "dividendYield": 0.54,
-    "dividendYieldText": "0.54%",
+    "dividendYield": 0.55,
+    "dividendYieldText": "0.55%",
     "dividendYieldBasis": "indicated",
     "secYield": 0.82,
     "secYieldText": "0.82%",
@@ -253,7 +253,7 @@
     "performanceAsOf": "2026-09-30"
    },
    "holdings": 186,
-   "history": 747
+   "history": 751
   }
  ]
 }

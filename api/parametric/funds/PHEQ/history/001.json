@@ -2,7 +2,7 @@
  "ticker": "PHEQ",
  "page": 1,
  "pageSize": 1000,
- "totalRows": 747,
+ "totalRows": 751,
  "headers": [
   "Date",
   "Close",
@@ -4488,9 +4488,33 @@
   },
   {
    "Date": "Oct 12 2026",
-   "Close": "35.825699",
+   "Close": "35.826",
    "Adj Close": "35.83",
-   "Volume": "2387"
+   "Volume": "2400"
+  },
+  {
+   "Date": "Oct 13 2026",
+   "Close": "35.855",
+   "Adj Close": "35.85",
+   "Volume": "2000"
+  },
+  {
+   "Date": "Oct 14 2026",
+   "Close": "35.630001",
+   "Adj Close": "35.63",
+   "Volume": "2800"
+  },
+  {
+   "Date": "Oct 15 2026",
+   "Close": "35.712002",
+   "Adj Close": "35.71",
+   "Volume": "53200"
+  },
+  {
+   "Date": "Oct 16 2026",
+   "Close": "35.494999",
+   "Adj Close": "35.49",
+   "Volume": "8300"
   }
  ]
 }
