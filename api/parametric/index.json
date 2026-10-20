@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-10-18T02:09:37Z",
+ "generatedAt": "2026-10-20T04:07:03Z",
  "source": {
   "provider": "Eaton Vance / MSIM product pages (ETF catalog, fund facts, returns and distributions); SEC EDGAR Form N-PORT-P holdings; Yahoo Finance chart API (daily NAV history and dividends)",
   "site": "https://www.eatonvance.com",
@@ -9,7 +9,7 @@
  "counts": {
   "funds": 3,
   "holdings": 572,
-  "history": 1877
+  "history": 1880
  },
  "funds": [
   {
@@ -53,8 +53,8 @@
      "ytdText": "7.63%",
      "yr1": 9,
      "yr1Text": "9.00%",
-     "yr3": null,
-     "yr3Text": "—",
+     "yr3": 11.57,
+     "yr3Text": "11.57%",
      "yr5": null,
      "yr5Text": "—",
      "yr10": null,
@@ -75,23 +75,23 @@
    "metrics": {
     "ytd": 7.63,
     "tr1y": 9,
-    "tr3y": null,
+    "tr3y": 38.88,
     "tr5y": null,
     "tr10y": null,
-    "cagr3y": null,
+    "cagr3y": 11.57,
     "cagr5y": null,
     "cagr10y": null,
     "siAnn": 9.4,
     "dividendYield": 7.7,
     "dividendYieldText": "7.70%",
     "dividendYieldBasis": "indicated",
-    "secYield": 2.71,
-    "secYieldText": "2.71%",
-    "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)",
+    "secYield": 2.69,
+    "secYieldText": "2.69%",
+    "returnsBasis": "mixed: official Eaton Vance / MSIM month-end NAV returns where the fund detail page publishes them; remaining periods are estimates derived from the Yahoo Finance adjusted daily series, not official NAV returns",
     "performanceAsOf": "2026-09-30"
    },
    "holdings": 194,
-   "history": 751
+   "history": 752
   },
   {
    "ticker": "PEPS",
@@ -172,7 +172,7 @@
     "performanceAsOf": "2026-09-30"
    },
    "holdings": 192,
-   "history": 375
+   "history": 376
   },
   {
    "ticker": "PHEQ",
@@ -215,8 +215,8 @@
      "ytdText": "8.51%",
      "yr1": 10.72,
      "yr1Text": "10.72%",
-     "yr3": null,
-     "yr3Text": "—",
+     "yr3": 15.18,
+     "yr3Text": "15.18%",
      "yr5": null,
      "yr5Text": "—",
      "yr10": null,
@@ -237,10 +237,10 @@
    "metrics": {
     "ytd": 8.51,
     "tr1y": 10.72,
-    "tr3y": null,
+    "tr3y": 52.8,
     "tr5y": null,
     "tr10y": null,
-    "cagr3y": null,
+    "cagr3y": 15.18,
     "cagr5y": null,
     "cagr10y": null,
     "siAnn": 14.08,
@@ -249,11 +249,11 @@
     "dividendYieldBasis": "indicated",
     "secYield": 0.82,
     "secYieldText": "0.82%",
-    "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)",
+    "returnsBasis": "mixed: official Eaton Vance / MSIM month-end NAV returns where the fund detail page publishes them; remaining periods are estimates derived from the Yahoo Finance adjusted daily series, not official NAV returns",
     "performanceAsOf": "2026-09-30"
    },
    "holdings": 186,
-   "history": 751
+   "history": 752
   }
  ]
 }

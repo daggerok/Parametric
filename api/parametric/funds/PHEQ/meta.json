@@ -85,8 +85,8 @@
    "ytdText": "8.51%",
    "yr1": 10.72,
    "yr1Text": "10.72%",
-   "yr3": null,
-   "yr3Text": "—",
+   "yr3": 15.18,
+   "yr3Text": "15.18%",
    "yr5": null,
    "yr5Text": "—",
    "yr10": null,
@@ -104,7 +104,7 @@
    "yr10": null,
    "sinceInception": 14.08
   },
-  "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)",
+  "returnsBasis": "mixed: official Eaton Vance / MSIM month-end NAV returns where the fund detail page publishes them; remaining periods are estimates derived from the Yahoo Finance adjusted daily series, not official NAV returns",
   "performanceAsOf": "2026-09-30"
  },
  "distributions": {
@@ -182,8 +182,8 @@
    "history/001.json"
   ],
   "pageSize": 1000,
-  "totalRows": 751,
-  "asOf": "Oct 16 2026",
+  "totalRows": 752,
+  "asOf": "Oct 19 2026",
   "source": "Yahoo Finance public chart API (adjusted close)"
  }
 }
