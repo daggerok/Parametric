@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import {
   CONTROL_NAMES, PARAMETRIC_FUND_SLUGS, PARAMETRIC_PRODUCT_IDS, annualizedToTotal, batchSelection, chartUrl, cleanHoldingTicker,
   configureProxyGate, createRequestGate, cursorScope, deriveCatalogMetrics, eftsSearchUrl, fetchSecJson, fetchSecText, fetchWithRetry,
-  fundFilterReasons, holdingsDownloadUrl, indicatedYield, inferDistributionFrequency, installSystemCa, isCertError, isParametricFundUrl,
+  fundFilterReasons, holdingsDownloadUrl, holdingsGuard, indicatedYield, inferDistributionFrequency, installSystemCa, isCertError, isParametricFundUrl,
   isoFromEdgar, issuerFrequency, issuerFundUrl, lastCompletedQuarterEnd, loadIssuerApi, mergeHistory, ADJ_CLOSE_NOISE, nextCursor,
   normalizeHoldingName, normalizeHoldingNameCore, normalizeSource, nportBelongsToFund, nportUrlFor, officialReturnsFor, parseAumRange,
   parseChart, parseCompanyTickerMap, parseEdgarAtomFilings, parseFundTickerMap, parseHoldingsCsv, parseIssuerApi, parseIssuerCatalog,
@@ -174,7 +174,7 @@ const NPORT = `<?xml version="1.0" encoding="UTF-8"?><edgarSubmission><formData>
 <pctVal>0.552137826604</pctVal><assetCat>EC</assetCat></invstOrSec>
 <invstOrSec><name>RLI Corp.</name><title>RLI Corp.</title><cusip>N/A</cusip>
 <identifiers><isin value="US7496071074"/></identifiers><balance>35281.00000000</balance><valUSD>2084048.67000000</valUSD>
-<pctVal>0.521215307282</pctVal><assetCat>EC</assetCat></invstOrSec>
+<pctVal>99.447862173396</pctVal><assetCat>EC</assetCat></invstOrSec>
 </invstOrSecs><monthlyTotReturns><monthlyTotReturn classId="C000245536" rtn1="-1.37" rtn2="-1.02" rtn3="1.79"/></monthlyTotReturns></formData></edgarSubmission>`;
 // The previous quarter's filing: January, February and March 2026.
 const NPORT_Q1 = NPORT.replace('<repPdDate>2026-06-30', '<repPdDate>2026-03-31').replace('rtn1="-1.37" rtn2="-1.02" rtn3="1.79"', 'rtn1="2.00" rtn2="1.00" rtn3="-1.50"');
@@ -527,6 +527,21 @@ describe('parsing', () => {
     expect(parsed.rows.map((row) => row.Ticker)).toEqual(['', 'MSFT', '']);
     expect(parsed.rows.find((row) => row.Ticker === 'MSFT')).toMatchObject({ Identifier: '594918104', Weight: '0.72', 'Shares Held': '6775', 'Market Value': '3474897.5' });
     expect(parseHoldingsCsv('nothing here')).toBeNull();
+  });
+
+  test('holdings guard: header-only, renamed weight column, broken weights, a bad weight sum and a halved sheet are rejected', () => {
+    const headers = ['Name', 'Ticker', 'Weight'];
+    const rows = [{ Name: 'A', Ticker: 'A', Weight: '60%' }, { Name: 'B', Ticker: 'B', Weight: '40%' }];
+    expect(holdingsGuard(headers, rows, 2)).toBeNull();
+    expect(holdingsGuard(headers, [['A', 'A', '60'], ['B', 'B', '40']], null)).toBeNull();
+    expect(holdingsGuard([], [], 0)).toBeNull(); // nothing published before: an empty sheet is honest
+    expect(holdingsGuard(headers, [], 505)).toContain('no holdings rows');
+    expect(holdingsGuard(['Name', 'Ticker', 'Wt'], rows, 2)).toContain('no weight column');
+    expect(holdingsGuard(headers, rows.map((row) => ({ ...row, Weight: '6\u200B0' })), 2)).toContain('numeric weight');
+    const allocation = [{ Name: 'Cash&Collateral', Ticker: '-', Weight: '100' }, { Name: 'Equities', Ticker: '-', Weight: '476' }];
+    expect(holdingsGuard(headers, allocation, 2)).toContain('outside 50..150');
+    expect(holdingsGuard(headers, allocation, 2, ['sum'])).toBeNull();
+    expect(holdingsGuard(headers, rows, 5)).toContain('less than half');
   });
 
   test('holdings: names and tickers normalize without merging share classes', () => {
@@ -943,6 +958,23 @@ describe('pipeline', () => {
       expect(files()).toEqual(published);
       expect(run({ TICKERS: 'PAPI' }, issuerFailure('PAPI')).exitCode).toBe(0); // kept, but Yahoo still answered: a partial outage stays green
       expect(run({ TICKERS: 'PAPI' }, [...issuerFailure('PAPI'), 'finance.yahoo.com', 'products/etfs.html']).exitCode).toBe(1); // nothing answered at all
+      expect(files()).toEqual(published);
+      expect(rewritten()).toEqual([]);
+    });
+  });
+
+  test('fresh N-PORT-P holdings that fail the holdings guard keep the fund exactly as published and count it as failed', () => {
+    withSandbox(({ dir, run, files, freeze, rewritten }) => {
+      expect(run({ EDGAR_FALLBACK: 'true' }).exitCode).toBe(0);
+      const published = files();
+      expect(JSON.parse(published['funds/PAPI/meta.json']).holdings.source).toContain('N-PORT-P');
+      freeze();
+      // a filing whose weight tag was renamed: every position parses with a 0 weight, so the weights add up to 0
+      const fixtures = join(dir, 'fixtures.json');
+      writeFileSync(fixtures, readFileSync(fixtures, 'utf8').replace(/pctVal>/g, 'pctValue>'));
+      const summary = join(dir, 'summary.md');
+      expect(run({ TICKERS: 'PAPI', EDGAR_FALLBACK: 'true', GITHUB_STEP_SUMMARY: summary }).exitCode).toBe(0); // other sources answered: stays green
+      expect(readFileSync(summary, 'utf8')).toContain('- failed: 1');
       expect(files()).toEqual(published);
       expect(rewritten()).toEqual([]);
     });
