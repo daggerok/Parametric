@@ -30,43 +30,43 @@
   "display": "0.10%",
   "grossDisplay": "0.29%",
   "netDisplay": "0.10%",
-  "asOf": "Oct 20 2026",
+  "asOf": "Oct 23 2026",
   "source": "official Eaton Vance / MSIM product data (net and gross expense ratio; terValue is the net ratio)"
  },
  "nav": {
-  "display": "$33.22",
-  "value": 33.2155,
-  "asOfDate": "2026-10-20",
+  "display": "$32.82",
+  "value": 32.8242,
+  "asOfDate": "2026-10-23",
   "source": "official Eaton Vance / MSIM product data (pricing)"
  },
  "marketPrice": {
-  "display": "$33.22",
-  "value": 33.22,
-  "asOfDate": "2026-10-20",
+  "display": "$32.85",
+  "value": 32.85,
+  "asOfDate": "2026-10-23",
   "source": "official Eaton Vance / MSIM product data (market price)"
  },
  "premiumDiscount": {
-  "display": "0.01%",
-  "value": 0.01,
-  "asOfDate": "2026-10-20",
+  "display": "0.08%",
+  "value": 0.08,
+  "asOfDate": "2026-10-23",
   "source": "computed from the issuer NAV and market price of the same date",
-  "amount": 0.01
+  "amount": 0.03
  },
  "bidAskSpread": {
   "display": "0.33%",
   "value": 0.33,
-  "asOfDate": "2026-10-20",
+  "asOfDate": "2026-10-23",
   "source": "official Eaton Vance / MSIM product data (median bid/ask spread)"
  },
  "aum": {
-  "display": "$29.89 M",
-  "value": 29893983.22,
-  "asOfDate": "Oct 20 2026",
+  "display": "$29.54 M",
+  "value": 29541812.82,
+  "asOfDate": "Oct 23 2026",
   "source": "derived: shares outstanding x NAV (the issuer publishes no net assets figure)"
  },
  "yields": {
-  "dividendYield": 1.03,
-  "dividendYieldText": "1.03%",
+  "dividendYield": 1.04,
+  "dividendYieldText": "1.04%",
   "dividendYieldBasis": "indicated",
   "dividendYieldKind": "indicated (latest distribution x payments per year / market price)",
   "secYield": 1.01,
@@ -166,8 +166,8 @@
    "history/001.json"
   ],
   "pageSize": 1000,
-  "totalRows": 377,
-  "asOf": "Oct 20 2026",
+  "totalRows": 380,
+  "asOf": "Oct 23 2026",
   "source": "Yahoo Finance public chart API (adjusted close)"
  }
 }
