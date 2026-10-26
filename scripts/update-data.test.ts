@@ -10,13 +10,14 @@ import {
   configureProxyGate, createRequestGate, cursorScope, deriveCatalogMetrics, eftsSearchUrl, fetchSecJson, fetchSecText, fetchWithRetry,
   fundFilterReasons, holdingsDownloadUrl, holdingsGuard, indicatedYield, inferDistributionFrequency, installSystemCa, isCertError, isParametricFundUrl,
   isoFromEdgar, issuerFrequency, issuerFundUrl, lastCompletedQuarterEnd, loadIssuerApi, mergeHistory, ADJ_CLOSE_NOISE, nextCursor,
-  normalizeHoldingName, normalizeHoldingNameCore, normalizeSource, nportBelongsToFund, nportUrlFor, officialReturnsFor, parseAumRange,
-  parseChart, parseCompanyTickerMap, parseEdgarAtomFilings, parseFundTickerMap, parseHoldingsCsv, parseIssuerApi, parseIssuerCatalog,
-  parseIssuerDistributions, parseIssuerProduct, parseIssuerReturnsTable, parseKeyFacts, parseNport, parseNportAccessions, parseRange,
+  normalizeHoldingName, normalizeHoldingNameCore, normalizeSource, nportIdentity, nportDocumentUrl, officialReturnsFor, parseAumRange,
+  parseChart, parseSecCompanyNames, parseEdgarAtomFilings, parseSecFundTickers, parseHoldingsCsv, parseIssuerApi, parseIssuerCatalog,
+  parseIssuerDistributions, parseIssuerProduct, parseIssuerReturnsTable, parseKeyFacts, parseNportFiling, parseNportSubmissions, parseRange,
   parseTopHoldings, pickEftsCik, priceReturns, proxyPayload, readConfig, resolveControls, runPool, runtimeControls, totalToAnnualized,
   edgarSeriesFilingsUrl, filingDocumentUrl, nportQuarterReturns, parseProspectusFacts, parseSubmissionDocuments, resetRunState, runFailed, runHealth,
   sourceGate, withRequestLane, ISSUER_UA, indexRowFromMeta, retainIssuerSections, closedFund,
-  chartDaysFromRows, newestPeriodFirst, nportHoldingsAreNewer,
+  chartDaysFromRows, nportNewestFirst, nportIsFresh, parseNportFeed, nportSeriesFeedUrl, nportTickers, nportNameKey, nportHoldingsSheet,
+  parseNportMonthlyReturns, parseNportDesignatedIndex, toIsoDate,
 } from './update-data';
 
 const ROOT = new URL('../', import.meta.url);
@@ -179,6 +180,9 @@ const NPORT = `<?xml version="1.0" encoding="UTF-8"?><edgarSubmission><formData>
 </invstOrSecs><monthlyTotReturns><monthlyTotReturn classId="C000245536" rtn1="-1.37" rtn2="-1.02" rtn3="1.79"/></monthlyTotReturns></formData></edgarSubmission>`;
 // The previous quarter's filing: January, February and March 2026.
 const NPORT_Q1 = NPORT.replace('<repPdDate>2026-06-30', '<repPdDate>2026-03-31').replace('rtn1="-1.37" rtn2="-1.02" rtn3="1.79"', 'rtn1="2.00" rtn2="1.00" rtn3="-1.50"');
+
+/** An own N-PORT filing as the quarter-end returns read it: report period and monthly NAV returns. */
+const ownFiling = (xml: string) => ({ repPdDate: parseNportFiling(xml).repPdDate, monthlyReturns: parseNportMonthlyReturns(xml) });
 
 // Summary prospectus (497K): flattened text of the fee table, with and without a fee waiver, as HTML.
 const PROSPECTUS = (fees: string) => `<html><body><p>Parametric Equity Premium Income ETF &#8202; Summary Prospectus&nbsp;&nbsp;|&nbsp; January 28, 2026</p>
@@ -564,39 +568,45 @@ describe('parsing 3', () => {
     expect(cleanHoldingTicker('N/A')).toBe('');
   });
 
-  test('SEC: ticker table, Atom feed and submissions resolve N-PORT-P filings newest first and skip other forms', () => {
-    const map = parseFundTickerMap(MF_TICKERS);
+  test('SEC (shared nport-reader): ticker table, Atom feed and submissions give NPORT-P candidates newest report period first, other forms skipped', () => {
+    const map = parseSecFundTickers(MF_TICKERS);
     expect(map.get('PAPI')).toEqual({ cik: '0001676326', seriesId: 'S000082252', classId: 'C000245536' });
-    const filings = parseEdgarAtomFilings(ATOM);
-    expect(filings.map((filing) => filing.accession)).toEqual(['0002071691-26-018745', '0002071691-26-018700']);
-    expect(filings[0].url).toBe(nportUrlFor('1676326', filings[0].accession));
-    expect(filings[0].url).toBe('https://www.sec.gov/Archives/edgar/data/1676326/000207169126018745/primary_doc.xml');
-    const accessions = parseNportAccessions({ cik: '1676326', filings: { recent: {
+    const feed = parseNportFeed(ATOM);
+    expect(feed.map((filing) => filing.accession)).toEqual(['0002071691-26-018745', '0002071691-26-018700']);
+    expect(nportDocumentUrl(feed[0].cik, feed[0].accession)).toBe('https://www.sec.gov/Archives/edgar/data/1676326/000207169126018745/primary_doc.xml');
+    expect(nportSeriesFeedUrl('S000082252')).toContain('type=NPORT-P');
+    const known = parseNportSubmissions({ cik: '1676326', filings: { recent: {
       form: ['NPORT-P', 'N-CSR', 'NPORT-P'], accessionNumber: ['0002071691-26-018745', '0002071691-26-018700', '0002071691-26-018741'],
       filingDate: ['2026-08-28', '2026-08-01', '2026-08-28'], reportDate: ['2026-06-30', '2026-06-30', '2026-06-30'],
     } } });
-    expect(accessions.map((entry) => entry.accession)).toEqual(['0002071691-26-018745', '0002071691-26-018741']);
+    expect(known.map((entry) => entry.accession)).toEqual(['0002071691-26-018745', '0002071691-26-018741']);
+    // an amendment of an older period filed later does not come first
+    const at = (accession: string, period: string, filed: string) => ({ accession, period, filed, cik: '1676326' });
+    expect(nportNewestFirst([at('q2', '2026-06-30', '2026-08-21'), at('q1-amended', '2026-03-31', '2026-09-02'), at('q3', '2026-09-30', '2026-11-25')]).map((c) => c.accession)).toEqual(['q3', 'q2', 'q1-amended']);
   });
 
-  test('SEC: an N-PORT-P document parses positions and net assets, also in the lowercase the proxy returns', () => {
-    const parsed = parseNport(NPORT);
-    expect(parsed).toMatchObject({ regName: 'Morgan Stanley ETF Trust', regCik: '0001676326', seriesId: 'S000082252', repPdDate: '2026-06-30', netAssets: 399_844_102.98, designatedIndex: 'Russell 1000 Value' });
-    expect(parsed.holdings[0]).toMatchObject({ Name: 'Kraft Heinz Co. (The)', Ticker: '-', Identifier: '500754106', Weight: '0.5521378266', 'Market Value': '2207690.54', 'Shares Held': '93467', 'Asset Category': 'EC' });
-    expect(parsed.holdings[1].Identifier).toBe('US7496071074'); // the N/A CUSIP falls back to the ISIN
-    const lower = parseNport(NPORT.toLowerCase());
-    expect(lower.seriesId).toBe(parsed.seriesId.toUpperCase());
-    expect(lower.holdings).toHaveLength(parsed.holdings.length);
+  test('SEC: an N-PORT-P document becomes the holdings sheet with empty missing numbers, own identifiers and tickers only for U.S. equities, also in the lowercase the proxy returns', () => {
+    const cash = '<invstOrSec><name>Morgan Stanley Institutional Liquidity Funds - Government Portfolio</name><cusip>61747C707</cusip><balance>7982326</balance><curCd>USD</curCd><valUSD>7982325.78</valUSD><pctVal>1.65</pctVal><assetCat>STIV</assetCat></invstOrSec></invstOrSecs>';
+    const xml = NPORT.replace('<pctVal>0.552137826604</pctVal>', '').replace('</invstOrSecs>', cash);
+    const filing = parseNportFiling(xml);
+    expect([filing.regName, filing.seriesId, filing.repPdDate, filing.netAssets, parseNportDesignatedIndex(xml)]).toEqual(['Morgan Stanley ETF Trust', 'S000082252', '2026-06-30', 399_844_102.98, 'Russell 1000 Value']);
+    // PAR-1: the money market fund of Morgan Stanley never takes MS, only equities get a ticker
+    const rows = nportHoldingsSheet(filing, nportTickers(filing.positions, parseSecCompanyNames({ 0: { ticker: 'KHC', title: 'Kraft Heinz Co' }, 1: { ticker: 'MS', title: 'MORGAN STANLEY' } })));
+    expect(rows[0]).toEqual({ Name: 'Kraft Heinz Co. (The)', Ticker: 'KHC', Identifier: '500754106', Weight: '', 'Market Value': '2207690.54', 'Shares Held': '93467', 'Asset Category': 'EC' });
+    expect(rows.slice(1).map((row) => [row.Ticker, row.Identifier, row.Weight])).toEqual([['-', 'US7496071074', '99.44786217'], ['-', '61747C707', '1.65']]); // the N/A CUSIP falls back to the ISIN
+    const lower = parseNportFiling(NPORT.toLowerCase());
+    expect([lower.seriesId, lower.positions.length]).toEqual(['S000082252', 2]);
   });
 
   test('SEC: a filing from another series is rejected, tickers come from the company table, search picks the matching registrant', () => {
     const fund = { name: 'Parametric Equity Premium Income ETF' };
-    expect(nportBelongsToFund({ seriesId: 'S000082252', seriesName: fund.name }, { seriesId: 'S000082252' }, fund)).toBe(true);
-    expect(nportBelongsToFund({ seriesId: 'S000082250', seriesName: 'Parametric Hedged Equity ETF' }, { seriesId: 'S000082252' }, fund)).toBe(false);
-    expect(nportBelongsToFund({ seriesId: '', seriesName: fund.name }, { seriesId: '' }, fund)).toBe(true);
-    expect(nportBelongsToFund({ seriesId: '', seriesName: 'Calvert US Large-Cap Core Responsible Index ETF' }, { seriesId: '' }, fund)).toBe(false);
-    const companies = parseCompanyTickerMap({ 0: { cik_str: 320193, ticker: 'AAPL', title: 'Apple Inc.' }, 1: { cik_str: 789019, ticker: 'MSFT', title: 'MICROSOFT CORP' } });
-    expect(companies.get(normalizeHoldingName('Apple Inc.'))).toBe('AAPL');
-    expect(companies.get(normalizeHoldingNameCore('Microsoft Corp'))).toBe('MSFT');
+    expect(nportIdentity({ seriesId: 'S000082252', seriesName: fund.name }, { seriesId: 'S000082252' }).problem).toBeNull();
+    expect(nportIdentity({ seriesId: 'S000082250', seriesName: 'Parametric Hedged Equity ETF' }, { seriesId: 'S000082252' }).problem).toContain('S000082250');
+    expect(nportIdentity({ seriesId: '', seriesName: fund.name }, fund).problem).toBeNull();
+    expect(nportIdentity({ seriesId: '', seriesName: 'Calvert US Large-Cap Core Responsible Index ETF' }, fund).problem).not.toBeNull();
+    const companies = parseSecCompanyNames({ 0: { cik_str: 320193, ticker: 'AAPL', title: 'Apple Inc.' }, 1: { cik_str: 789019, ticker: 'MSFT', title: 'MICROSOFT CORP' } });
+    expect(companies.get(nportNameKey('Apple Inc.'))).toBe('AAPL');
+    expect(companies.get(nportNameKey('Microsoft Corp'))).toBe('MSFT');
     const payload = { hits: [
       { _source: { display_names: { cik: 12345, names: ['Some Other Trust'] } } },
       { _source: { display_names: { cik: 1676326, names: ['Parametric Equity Premium Income ETF', 'MORGAN STANLEY ETF TRUST'] } } },
@@ -607,9 +617,9 @@ describe('parsing 3', () => {
   });
 
   test('SEC: the N-PORT-P monthly NAV returns of a quarter parse per share class, a missing figure is null', () => {
-    expect(parseNport(NPORT).monthlyReturns).toEqual([{ classId: 'C000245536', months: [-1.37, -1.02, 1.79] }]);
-    expect(parseNport(NPORT.replace('rtn2="-1.02"', 'rtn2="N/A"')).monthlyReturns[0].months).toEqual([-1.37, null, 1.79]);
-    expect(parseNport(NPORT.replace(/<monthlyTotReturns>.*<\/monthlyTotReturns>/, '')).monthlyReturns).toEqual([]);
+    expect(parseNportMonthlyReturns(NPORT)).toEqual([{ classId: 'C000245536', months: [-1.37, -1.02, 1.79] }]);
+    expect(parseNportMonthlyReturns(NPORT.replace('rtn2="-1.02"', 'rtn2="N/A"'))[0].months).toEqual([-1.37, null, 1.79]);
+    expect(parseNportMonthlyReturns(NPORT.replace(/<monthlyTotReturns>.*<\/monthlyTotReturns>/, ''))).toEqual([]);
   });
 });
 
@@ -624,7 +634,7 @@ describe('parsing 4', () => {
 
   test('SEC: the series Atom feed lists 497K filings and the submissions JSON names their primary documents', () => {
     expect(edgarSeriesFilingsUrl('S000082252', 6, '497K')).toContain('type=497K');
-    expect(edgarSeriesFilingsUrl('S000082252')).toContain('type=NPORT-P');
+    expect(edgarSeriesFilingsUrl('S000082252')).toContain('type=497K');
     expect(parseEdgarAtomFilings(ATOM_497K, '497K').map((filing) => filing.accession)).toEqual(['0001133228-26-001031']);
     const documents = parseSubmissionDocuments(SUBMISSIONS, '497K');
     expect([...documents.keys()]).toEqual(['0001133228-26-001031', '0001104659-26-112235']);
@@ -658,16 +668,18 @@ describe('parsing 4', () => {
 });
 
 describe('parsing 5', () => {
-  test('SEC: N-PORT holdings come from the newest report period and replace published ones only when strictly newer', () => {
-    const at = (accession: string, reportDate: string, filed: string) => ({ accession, reportDate, filed, url: accession });
-    // an amendment of an older period filed later does not come first
-    expect(newestPeriodFirst([at('q2', '2026-06-30', '2026-08-21'), at('q1-amended', '2026-03-31', '2026-09-02'), at('q3', '2026-09-30', '2026-11-25')]).map((c) => c.accession))
-      .toEqual(['q3', 'q2', 'q1-amended']);
-    expect(newestPeriodFirst([at('a', '', '2026-08-21'), at('b', '', '2026-09-02')]).map((c) => c.accession)).toEqual(['b', 'a']);
-    const published = { totalRows: 194, asOfDate: '2026-06-30' };
-    expect([nportHoldingsAreNewer('2026-03-31', published), nportHoldingsAreNewer('2026-06-30', published), nportHoldingsAreNewer('2026-09-30', published)]).toEqual([false, false, true]);
-    expect([nportHoldingsAreNewer('2026-03-31', undefined), nportHoldingsAreNewer('2026-03-31', { totalRows: 0, asOfDate: null })]).toEqual([true, true]);
-    expect([nportHoldingsAreNewer('', published), nportHoldingsAreNewer('2026-09-30', { totalRows: 194, asOfDate: null })]).toEqual([false, false]);
+  test('N-PORT freshness: a report replaces published holdings only when strictly newer; nothing published accepts any report', () => {
+    expect([nportIsFresh('2026-03-31', '2026-06-30', 194), nportIsFresh('2026-06-30', '2026-06-30', 194), nportIsFresh('2026-09-30', '2026-06-30', 194)]).toEqual([false, false, true]);
+    expect([nportIsFresh('2026-03-31', undefined, undefined), nportIsFresh('2026-03-31', null, 0)]).toEqual([true, true]);
+    expect([nportIsFresh('', '2026-06-30', 194), nportIsFresh('2026-09-30', null, 194)]).toEqual([false, false]); // unknown dates keep the published sheet
+  });
+
+  test('dates: month-name and U.S. dates are the same calendar day in every time zone', () => {
+    for (const tz of ['Asia/Tokyo', 'America/Los_Angeles', 'UTC']) {
+      process.env.TZ = tz;
+      expect(['Oct 24, 2026', 'October 24 2026', '24 Oct 2026', '10/24/2026', '10/24/26', '2026-10-24'].map((raw) => toIsoDate(raw))).toEqual(Array(6).fill('2026-10-24'));
+      expect(toIsoDate('not a date')).toBe('not a date');
+    }
   });
 });
 
@@ -751,8 +763,8 @@ describe('metrics 2', () => {
   });
 
   test('quarter-end returns from SEC months: compounded, dated by the newest filing, null unless every month is filed', () => {
-    const q1 = parseNport(NPORT_Q1);
-    const q2 = parseNport(NPORT);
+    const q1 = ownFiling(NPORT_Q1);
+    const q2 = ownFiling(NPORT);
     const both = nportQuarterReturns([q2, q1], 'C000245536')!;
     expect(both).toMatchObject({ asOfDate: '2026-06-30', mo1: 1.79, qtd: -0.63, ytd: 0.84, yr1: null }); // April to June, and January to June
     expect(nportQuarterReturns([q2])).toMatchObject({ asOfDate: '2026-06-30', qtd: -0.63, ytd: null }); // January to March missing
@@ -773,7 +785,9 @@ describe('metrics 2', () => {
     expect(inferDistributionFrequency([0, 1, 2, 3].map((i) => ({ epoch: Date.UTC(2026, i * 3, 21) / 1000, amount: 0.05 }))).frequency).toBe('Quarterly');
     expect(inferDistributionFrequency([]).paymentsPerYear).toBeNull();
   });
+});
 
+describe('metrics 3', () => {
   test('published history dates are calendar dates: the same rows and dates in every timezone', () => {
     const previous = [{ Date: 'Oct 01 2026', Close: '10', 'Adj Close': '10', Volume: '1' }];
     const fresh = [{ date: '2026-10-01', close: 10, adjClose: 10, volume: 1 }, { date: '2026-10-02', close: 11, adjClose: 11, volume: 1 }];
@@ -783,6 +797,18 @@ describe('metrics 2', () => {
       expect(merged.map((row) => row.Date)).toEqual(['Oct 01 2026', 'Oct 02 2026']);
       expect(chartDaysFromRows(merged).map((day) => day.date)).toEqual(['2026-10-01', '2026-10-02']);
     }
+  });
+
+  test('a fund younger than one year publishes no 1y or since-inception return, official or derived', () => {
+    withSandbox(({ run, files }) => {
+      const young = JSON.parse(JSON.stringify(API_FILES.detail));
+      young.en.inceptionDate = '01-15-2026';
+      expect(run({ TICKERS: 'PAPI', MOCK_API: JSON.stringify({ 'en-us-financial-advisor': young }) }).exitCode).toBe(0);
+      const published = files();
+      const metrics = indexRows(published).find((row) => row.ticker === 'PAPI').metrics;
+      expect([metrics.ytd, metrics.tr1y, metrics.cagr3y, metrics.siAnn, metrics.performanceAsOf]).toEqual([7.63, null, null, null, '2026-09-30']);
+      expect(JSON.parse(published['funds/PAPI/meta.json']).returns.monthEnd).toMatchObject({ ytd: 7.63, yr1: null, sinceInception: null });
+    });
   });
 
   test('dates: Edgar labels convert to ISO and the quarter anchor is the last completed quarter (UTC)', () => {
@@ -985,7 +1011,7 @@ describe('pipeline 2', () => {
     withSandbox(({ run, files }) => {
       const result = run({ TICKERS: 'NOPE' });
       expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain('absent from catalog');
+      expect(result.stderr).toContain('TICKERS: NOPE not in the Parametric catalog or published feed; nothing was fetched or written');
       expect(Object.keys(files()).filter((name) => name.startsWith('funds/'))).toEqual([]);
     });
   });
@@ -1039,7 +1065,7 @@ describe('pipeline 2', () => {
         rmSync(summary, { force: true });
         const result = run({ TICKERS: 'PAPI', GITHUB_STEP_SUMMARY: summary, ...env }, fail);
         expect(result.exitCode).toBe(0); // the catalog answered: a red run needs every source silent
-        expect(result.stdout).toContain('NEW FUNDS: PAPI');
+        expect(result.stdout).toContain('NEW FUNDS (not published yet): PAPI');
         expect(readFileSync(summary, 'utf8')).toContain('- failed: 1');
         const after = files();
         expect(Object.keys(after).filter((name) => name.startsWith('funds/PAPI/'))).toEqual([]);
@@ -1058,7 +1084,9 @@ describe('pipeline 2', () => {
       writeFileSync(fixtures, good);
       failNew({}, [...issuerFailure('PAPI'), 'finance.yahoo.com']);
       // the catalog-only row is not the published state: the next good run publishes the fund exactly like a first run
-      expect(run({ TICKERS: 'PAPI', EDGAR_FALLBACK: 'true' }).exitCode).toBe(0);
+      const recovery = run({ TICKERS: 'PAPI', EDGAR_FALLBACK: 'true' });
+      expect(recovery.exitCode).toBe(0);
+      expect(recovery.stdout).toContain('NEW FUNDS: PAPI');
       const recovered = files();
       for (const name of Object.keys(published)) if (name.startsWith('funds/PAPI/')) expect([name, recovered[name]]).toEqual([name, published[name]]);
       expect(indexRows(recovered)).toEqual(indexRows(published));
@@ -1215,6 +1243,78 @@ describe('pipeline 3', () => {
       expect(history.length).toBeGreaterThan(0);
       for (const name of history) expect(after[name]).toBe(published[name]);
       expect(indexRows(after).map((row) => row.ticker)).toEqual(['PAPI', 'PEPS', 'PHEQ']);
+    });
+  });
+});
+
+describe('pipeline 4', () => {
+  test('a HISTORY_RANGE run after a full run keeps the older history and writes nothing (Q25)', () => {
+    withSandbox(({ run, files, freeze, rewritten }) => {
+      const day = (daysAgo: number): number => Math.floor(Date.now() / 86_400_000 - daysAgo) * 86_400 + 48_600;
+      const full = { timestamp: [day(3 * 365 + 10), day(10), day(3)], close: [21, 26, 31], adjclose: [20.02, 25.98, 30] };
+      expect(run({ MOCK_CHART: JSON.stringify(full) }).exitCode).toBe(0);
+      const first = files();
+      expect(indexRows(first).find((row) => row.ticker === 'PAPI').metrics.cagr3y).not.toBeNull();
+      freeze();
+      const windowed = { timestamp: full.timestamp.slice(1), close: full.close.slice(1), adjclose: full.adjclose.slice(1) };
+      expect(run({ MOCK_CHART: JSON.stringify(windowed), HISTORY_RANGE: '1y' }).exitCode).toBe(0);
+      expect(files()).toEqual(first);
+      expect(rewritten()).toEqual([]);
+    });
+  });
+
+  test('a relaxed guard still keeps numeric published weights from an all-blank N-PORT sheet (Q24)', () => {
+    withSandbox(({ dir, run, files, freeze, rewritten }) => {
+      expect(run({ EDGAR_FALLBACK: 'true' }).exitCode).toBe(0);
+      const published = files();
+      freeze();
+      const script = join(dir, 'scripts/update-data.ts');
+      writeFileSync(script, readFileSync(script, 'utf8').replace("const HOLDINGS_GUARD_RELAX: Record<string, string[]> = {};", "const HOLDINGS_GUARD_RELAX: Record<string, string[]> = { '*': ['numeric', 'sum'] };"));
+      const fixtures = join(dir, 'fixtures.json');
+      writeFileSync(fixtures, readFileSync(fixtures, 'utf8').replace(/pctVal>/g, 'pctValue>').replace('<repPdDate>2026-06-30', '<repPdDate>2026-09-30'));
+      const summary = join(dir, 'summary.md');
+      expect(run({ TICKERS: 'PAPI', EDGAR_FALLBACK: 'true', GITHUB_STEP_SUMMARY: summary }).exitCode).toBe(0);
+      expect(readFileSync(summary, 'utf8')).toContain('- failed: 1');
+      expect(files()).toEqual(published);
+      expect(rewritten()).toEqual([]);
+    });
+  });
+
+  test('TICKERS outside the live catalog stops the run before any fund request; a stale catalog-only row is dropped (Q27)', () => {
+    withSandbox(({ dir, run, files }) => {
+      expect(run().exitCode).toBe(0);
+      const indexFile = join(dir, 'api/parametric/index.json');
+      const index = JSON.parse(readFileSync(indexFile, 'utf8'));
+      index.funds.push({ ...index.funds[0], ticker: 'NOPE', name: 'NOPE', dataFile: null });
+      writeFileSync(indexFile, JSON.stringify(index));
+      const before = files();
+      const log = join(dir, 'requests.log');
+      const result = run({ TICKERS: 'NOPE', MOCK_LOG: log });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain('TICKERS: NOPE not in the Parametric catalog or published feed; nothing was fetched or written');
+      expect(readFileSync(log, 'utf8').trim().split('\n').filter((url) => !url.includes('/products/etfs.html'))).toEqual([]);
+      expect(files()).toEqual(before);
+      expect(run().exitCode).toBe(0);
+      expect(indexRows(files()).map((row) => row.ticker)).toEqual(['PAPI', 'PEPS', 'PHEQ']);
+    });
+  });
+
+  test('NEW FUNDS announces a fund on its first successful publish, a failed new fund as not published yet (Q28)', () => {
+    withSandbox(({ dir, run }) => {
+      expect(run().exitCode).toBe(0);
+      const indexFile = join(dir, 'api/parametric/index.json');
+      const index = JSON.parse(readFileSync(indexFile, 'utf8'));
+      // PAPI was listed before with no data (its first read failed), PEPS is new to the catalog
+      index.funds = index.funds.filter((row: { ticker: string }) => row.ticker !== 'PEPS').map((row: { ticker: string }) => (row.ticker === 'PAPI' ? { ...row, dataFile: null } : row));
+      writeFileSync(indexFile, JSON.stringify(index));
+      for (const ticker of ['PAPI', 'PEPS']) rmSync(join(dir, 'api/parametric/funds', ticker), { recursive: true, force: true });
+      const summary = join(dir, 'summary.md');
+      const lines = (stdout: string): string[] => stdout.split('\n').filter((line) => line.startsWith('NEW FUNDS'));
+      const pepsDown = [...issuerFailure('PEPS'), 'chart/PEPS'];
+      expect(lines(run({ GITHUB_STEP_SUMMARY: summary }, pepsDown).stdout)).toEqual(['NEW FUNDS: PAPI', 'NEW FUNDS (not published yet): PEPS']);
+      expect(readFileSync(summary, 'utf8')).toContain('### NEW FUNDS\n\nNEW FUNDS: PAPI\nNEW FUNDS (not published yet): PEPS\n');
+      expect(lines(run({}, pepsDown).stdout)).toEqual([]);
+      expect(lines(run().stdout)).toEqual(['NEW FUNDS: PEPS']);
     });
   });
 });
