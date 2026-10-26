@@ -6,7 +6,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdir
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  CONTROL_NAMES, PARAMETRIC_FUND_SLUGS, PARAMETRIC_PRODUCT_IDS, annualizedToTotal, batchSelection, chartUrl, cleanHoldingTicker,
+  CLOSED_FUNDS, CONTROL_NAMES, PARAMETRIC_FUND_SLUGS, PARAMETRIC_PRODUCT_IDS, annualizedToTotal, batchSelection, chartUrl, cleanHoldingTicker,
   configureProxyGate, createRequestGate, cursorScope, deriveCatalogMetrics, eftsSearchUrl, fetchSecJson, fetchSecText, fetchWithRetry,
   fundFilterReasons, holdingsDownloadUrl, holdingsGuard, indicatedYield, inferDistributionFrequency, installSystemCa, isCertError, isParametricFundUrl,
   isoFromEdgar, issuerFrequency, issuerFundUrl, lastCompletedQuarterEnd, loadIssuerApi, mergeHistory, ADJ_CLOSE_NOISE, nextCursor,
@@ -15,7 +15,7 @@ import {
   parseIssuerDistributions, parseIssuerProduct, parseIssuerReturnsTable, parseKeyFacts, parseNport, parseNportAccessions, parseRange,
   parseTopHoldings, pickEftsCik, priceReturns, proxyPayload, readConfig, resolveControls, runPool, runtimeControls, totalToAnnualized,
   edgarSeriesFilingsUrl, filingDocumentUrl, nportQuarterReturns, parseProspectusFacts, parseSubmissionDocuments, resetRunState, runFailed, runHealth,
-  sourceGate, withRequestLane, ISSUER_UA, indexRowFromMeta, retainIssuerSections,
+  sourceGate, withRequestLane, ISSUER_UA, indexRowFromMeta, retainIssuerSections, closedFund,
 } from './update-data';
 
 const ROOT = new URL('../', import.meta.url);
@@ -316,7 +316,9 @@ describe('controls', () => {
       }
     }
   });
+});
 
+describe('controls 2', () => {
   test('valid values of every control type resolve to strings; MAX_RETRIES is an integer >= 1 everywhere', () => {
     const controls = resolveControls({}, {
       MAX_RETRIES: 1, REQUEST_SLEEP: 0.5, HISTORY_RANGE: '5y', SKIP_ISSUER: true, AUM: 'large', TER: ':0.5', TOTAL_RETURN_3Y: '10:',
@@ -377,7 +379,9 @@ describe('controls', () => {
     expect(cursorScope(readConfig({ TICKERS: 'PAPI' }))).not.toBe(cursorScope(readConfig({ TICKERS: 'PEPS' })));
     expect(cursorScope(readConfig({ TICKERS: 'PAPI' }))).toBe(cursorScope(readConfig({ TICKERS: 'PAPI' })));
   });
+});
 
+describe('controls 3', () => {
   test('USE_SYSTEM_CA: certificate errors are recognized, the script restarts once, other errors pass through', async () => {
     const certError = Object.assign(new Error('unable to get local issuer certificate'), { code: 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY' });
     expect(isCertError(certError)).toBe(true);
@@ -479,7 +483,9 @@ describe('parsing', () => {
     expect(issuerFrequency('Semi-annually').paymentsPerYear).toBe(2);
     expect(issuerFrequency('Unrecognized')).toEqual({ frequency: 'Unknown', paymentsPerYear: null, code: '' });
   });
+});
 
+describe('parsing 2', () => {
   test('fund page: HTML tables become pipe rows and proxy banners and images are stripped', () => {
     const text = normalizeSource('<table><tr><td>Asset Class</td><td>US Equity</td></tr></table>');
     expect(parseKeyFacts(text).get('Asset Class')).toBe('US Equity');
@@ -543,7 +549,9 @@ describe('parsing', () => {
     expect(holdingsGuard(headers, allocation, 2, ['sum'])).toBeNull();
     expect(holdingsGuard(headers, rows, 5)).toContain('less than half');
   });
+});
 
+describe('parsing 3', () => {
   test('holdings: names and tickers normalize without merging share classes', () => {
     expect(normalizeHoldingName('Apple Inc.')).toBe('APPLE');
     expect(normalizeHoldingName('THE BOEING CO')).toBe('BOEING');
@@ -602,7 +610,9 @@ describe('parsing', () => {
     expect(parseNport(NPORT.replace('rtn2="-1.02"', 'rtn2="N/A"')).monthlyReturns[0].months).toEqual([-1.37, null, 1.79]);
     expect(parseNport(NPORT.replace(/<monthlyTotReturns>.*<\/monthlyTotReturns>/, '')).monthlyReturns).toEqual([]);
   });
+});
 
+describe('parsing 4', () => {
   test('SEC: the 497K summary prospectus gives gross and net fees, the inception date and the document date', () => {
     expect(parseProspectusFacts(PROSPECTUS(FEES_PLAIN), 'PAPI')).toEqual({ documentDate: '2026-01-28', grossExpense: 0.29, netExpense: 0.29, inception: '2023-10-16' });
     expect(parseProspectusFacts(PROSPECTUS(FEES_WAIVER), 'PAPI')).toMatchObject({ grossExpense: 0.4, netExpense: 0.25 }); // footnote digits are not figures
@@ -713,7 +723,9 @@ describe('metrics', () => {
     expect(metrics.returnsBasis).toContain('not official NAV returns');
     expect(deriveCatalogMetrics(NO_RETURNS, NO_DERIVED, null, null, null, null, null).performanceAsOf).toBeNull();
   });
+});
 
+describe('metrics 2', () => {
   test('no derived value is relabelled official: a published fund is kept when this run read no official source at all', () => {
     expect(sourceGate(false, true, true)).toBe('fail');
     expect(sourceGate(false, true, false)).toBe('skip');
@@ -763,11 +775,12 @@ describe('metrics', () => {
 // ---------------------------------------------------------------------------
 
 const PRELOAD = `
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 const fixtures = JSON.parse(readFileSync(process.env.MOCK_FIXTURES, 'utf8'));
 const failing = JSON.parse(process.env.MOCK_FAIL || '[]');
 globalThis.fetch = async (input) => {
   const url = String(input);
+  if (process.env.MOCK_LOG) appendFileSync(process.env.MOCK_LOG, url + '\\n');
   if (failing.some((part) => url.includes(part))) return new Response('boom', { status: 500 });
   // MOCK_CHART: { timestamp, close, adjclose } replacing the Yahoo daily series (float32 noise around a cent boundary)
   if (url.startsWith('https://query1.finance.yahoo.com/') && process.env.MOCK_CHART) {
@@ -939,7 +952,9 @@ describe('pipeline', () => {
       expect(rewritten().filter((name) => !name.startsWith('funds/PEPS/'))).toEqual([]);
     });
   });
+});
 
+describe('pipeline 2', () => {
   test('an unknown ticker fails the run before anything is written', () => {
     withSandbox(({ run, files }) => {
       const result = run({ TICKERS: 'NOPE' });
@@ -980,6 +995,99 @@ describe('pipeline', () => {
     });
   });
 
+  test('a new fund whose holdings fail the guard, or that no source answered, is failed with a catalog-only row and no files; the next good run publishes it in full', () => {
+    withSandbox(({ dir, run, files }) => {
+      expect(run({ EDGAR_FALLBACK: 'true' }).exitCode).toBe(0);
+      const published = files();
+      const fixtures = join(dir, 'fixtures.json');
+      const good = readFileSync(fixtures, 'utf8');
+      const summary = join(dir, 'summary.md');
+      const indexFile = join(dir, 'api/parametric/index.json');
+      const failNew = (env: Record<string, string>, fail: string[]): void => {
+        // PAPI becomes a new fund: listed by the catalog, nothing published yet
+        rmSync(join(dir, 'api/parametric/funds/PAPI'), { recursive: true, force: true });
+        const index = JSON.parse(readFileSync(indexFile, 'utf8'));
+        index.funds = index.funds.filter((row: { ticker: string }) => row.ticker !== 'PAPI');
+        writeFileSync(indexFile, JSON.stringify(index));
+        rmSync(summary, { force: true });
+        const result = run({ TICKERS: 'PAPI', GITHUB_STEP_SUMMARY: summary, ...env }, fail);
+        expect(result.exitCode).toBe(0); // the catalog answered: a red run needs every source silent
+        expect(result.stdout).toContain('NEW FUNDS: PAPI');
+        expect(readFileSync(summary, 'utf8')).toContain('- failed: 1');
+        const after = files();
+        expect(Object.keys(after).filter((name) => name.startsWith('funds/PAPI/'))).toEqual([]);
+        const rows = indexRows(after);
+        expect(rows.map((row) => row.ticker)).toEqual(['PAPI', 'PEPS', 'PHEQ']);
+        const row = rows.find((item) => item.ticker === 'PAPI');
+        expect(row).toMatchObject({ dataFile: null, holdings: 0, history: 0, name: 'Parametric Equity Premium Income ETF' });
+        expect(Object.keys(row.metrics)).toEqual(Object.keys(rows[1].metrics));
+        for (const [key, value] of Object.entries(row.metrics)) if (!/Text$|^returnsBasis$/.test(key)) expect([key, value]).toEqual([key, null]);
+        expect(row.metrics.returnsBasis).toEqual(expect.any(String));
+      };
+      // the guard rejects the fresh N-PORT-P holdings of a fund with no published sheet
+      writeFileSync(fixtures, good.replace(/pctVal>/g, 'pctValue>'));
+      failNew({ EDGAR_FALLBACK: 'true' }, []);
+      // no source answers for the fund at all: never an empty meta.json reported updated
+      writeFileSync(fixtures, good);
+      failNew({}, [...issuerFailure('PAPI'), 'finance.yahoo.com']);
+      // the catalog-only row is not the published state: the next good run publishes the fund exactly like a first run
+      expect(run({ TICKERS: 'PAPI', EDGAR_FALLBACK: 'true' }).exitCode).toBe(0);
+      const recovered = files();
+      for (const name of Object.keys(published)) if (name.startsWith('funds/PAPI/')) expect([name, recovered[name]]).toEqual([name, published[name]]);
+      expect(indexRows(recovered)).toEqual(indexRows(published));
+    });
+  });
+
+  test('a closed fund is never fetched or reported failed: its files stay as published, its index row says closed, a rerun writes nothing', () => {
+    const entry = { ticker: 'PAPI', closed: '2026-10-01', source: 'https://www.sec.gov/Archives/edgar/data/1/notice.htm' };
+    expect(CLOSED_FUNDS).toEqual([]);
+    expect(() => closedFund([{ ...entry, closed: 'soon' }], 'PAPI')).toThrow('CLOSED_FUNDS');
+    expect(closedFund([entry], 'papi')).toEqual(entry);
+    withSandbox(({ dir, run, files, freeze, rewritten }) => {
+      expect(run({ EDGAR_FALLBACK: 'true' }).exitCode).toBe(0);
+      const first = files();
+      // the sandbox runs its own copy of the updater: the entry goes into that copy's CLOSED_FUNDS
+      const script = join(dir, 'scripts/update-data.ts');
+      const declared = 'export const CLOSED_FUNDS: ClosedFund[] = [];';
+      expect(readFileSync(script, 'utf8')).toContain(declared);
+      writeFileSync(script, readFileSync(script, 'utf8').replace(declared, `export const CLOSED_FUNDS: ClosedFund[] = [${JSON.stringify(entry)}];`));
+      // the live catalog no longer lists the fund, and its holdings would fail the guard
+      const fixtures = join(dir, 'fixtures.json');
+      const good = readFileSync(fixtures, 'utf8');
+      const changed = JSON.parse(good.replace(/pctVal>/g, 'pctValue>'));
+      changed.catalog = changed.catalog.split('\n').filter((line: string) => !line.includes('PAPI<br>')).join('\n');
+      writeFileSync(fixtures, JSON.stringify(changed));
+      const log = join(dir, 'requests.log');
+      const summary = join(dir, 'summary.md');
+      const closed = run({ TICKERS: 'PAPI', EDGAR_FALLBACK: 'true', MOCK_LOG: log, GITHUB_STEP_SUMMARY: summary });
+      expect(closed.exitCode).toBe(0);
+      expect(closed.stdout).toContain('[ closed   ] PAPI');
+      expect(readFileSync(summary, 'utf8')).toContain('- failed: 0');
+      const requests = readFileSync(log, 'utf8').split('\n').filter(Boolean);
+      expect(requests.length).toBeGreaterThan(0); // the catalog was read
+      expect(requests.filter((url) => /papi/i.test(url) || issuerFailure('PAPI').some((part) => url.includes(part)))).toEqual([]);
+      const after = files();
+      expect(Object.keys(after)).toEqual(Object.keys(first));
+      for (const name of Object.keys(first)) if (name !== 'index.json') expect([name, after[name]]).toEqual([name, first[name]]);
+      const rows = indexRows(after);
+      expect(rows.map((row) => row.ticker)).toEqual(['PAPI', 'PEPS', 'PHEQ']);
+      const { status, closedDate, closedSource, ...kept } = rows[0];
+      expect({ status, closedDate, closedSource }).toEqual({ status: 'closed', closedDate: '2026-10-01', closedSource: entry.source });
+      expect(kept).toEqual(indexRows(first)[0]);
+      expect(rows.filter((row) => row.status === 'closed')).toHaveLength(1);
+      // a full rerun on the restored sources refreshes the open funds and writes nothing
+      writeFileSync(fixtures, good);
+      freeze();
+      const rerun = run({ EDGAR_FALLBACK: 'true' });
+      expect(rerun.exitCode).toBe(0);
+      expect(rerun.stdout).toContain('[ closed   ] PAPI');
+      expect(files()).toEqual(after);
+      expect(rewritten()).toEqual([]);
+    });
+  });
+});
+
+describe('pipeline 3', () => {
   test('the issuer blocked and SEC EDGAR answering: official SEC fees and months, null NAV, derived returns labelled as such', () => {
     withSandbox(({ dir, run, files }) => {
       run();
@@ -1047,6 +1155,13 @@ describe('pipeline', () => {
       expect(Object.keys(rebuilt.metrics)).toEqual(Object.keys(rows[1].metrics));
       expect(indexRowFromMeta(ghost).metrics.returnsBasis).toContain('official');
       expect(indexRowFromMeta({ ticker: 'BARE' }).metrics).toMatchObject({ ytd: null, returnsBasis: expect.any(String), performanceAsOf: null });
+      // a stale catalog-only row (dataFile null) never hides a published meta.json
+      const indexFile = join(dir, 'api/parametric/index.json');
+      const index = JSON.parse(readFileSync(indexFile, 'utf8'));
+      index.funds = index.funds.map((row: { ticker: string }) => (row.ticker === 'GHST' ? { ticker: 'GHST', name: 'Ghost ETF', dataFile: null, holdings: 0, history: 0 } : row));
+      writeFileSync(indexFile, JSON.stringify(index));
+      expect(run({ TICKERS: 'PEPS' }).exitCode).toBe(0);
+      expect(indexRows(files()).find((row) => row.ticker === 'GHST')).toEqual(rebuilt);
     });
   });
 
@@ -1120,7 +1235,9 @@ describe('network', () => {
     expect(await peakWith(3)).toBe(3);
     expect(await peakWith(15)).toBe(6);
   });
+});
 
+describe('network 2', () => {
   test('a worker pool handles every item exactly once and tolerates an empty queue', async () => {
     const seen: number[] = [];
     await runPool([1, 2, 3, 4, 5], 3, 0, async (item) => { await Bun.sleep(item); seen.push(item); });
@@ -1182,7 +1299,9 @@ describe('network', () => {
     expect(runHealth().answered).toBe(1);
     expect([runFailed(3, 3, 0), runFailed(3, 3, 1), runFailed(3, 1, 0), runFailed(0, 0, 0)]).toEqual([true, false, false, false]);
   });
+});
 
+describe('network 3', () => {
   test('issuer reads send the curl client string, SEC reads the contact agent; a 403 on the first issuer attempt falls back to one proxy retry, then the issuer is skipped', async () => {
     const seen: Array<{ url: string; ua: string }> = [];
     mockFetch((url, init) => {
