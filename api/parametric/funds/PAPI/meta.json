@@ -69,9 +69,9 @@
   "dividendYieldText": "7.54%",
   "dividendYieldBasis": "indicated",
   "dividendYieldKind": "indicated (latest distribution x payments per year / market price)",
-  "secYield": 2.64,
-  "secYieldText": "2.64%",
-  "secYieldKind": "30-day SEC yield as published by eatonvance.com, as of Oct 22 2026"
+  "secYield": 2.65,
+  "secYieldText": "2.65%",
+  "secYieldKind": "30-day SEC yield as published by eatonvance.com, as of Oct 23 2026"
  },
  "returns": {
   "derivedFrom": "official Eaton Vance / MSIM published returns; month-to-date and history-derived periods use the Yahoo Finance adjusted series",
@@ -85,8 +85,8 @@
    "ytdText": "7.63%",
    "yr1": 9,
    "yr1Text": "9.00%",
-   "yr3": 12.74,
-   "yr3Text": "12.74%",
+   "yr3": 12.75,
+   "yr3Text": "12.75%",
    "yr5": null,
    "yr5Text": "—",
    "yr10": null,
