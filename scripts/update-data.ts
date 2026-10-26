@@ -2604,9 +2604,10 @@ export const ADJ_CLOSE_NOISE = 1e-4;
 
 export function mergeHistory(previous: JsonRecord[], fresh: ChartDay[]): JsonRecord[] {
   const byDate = new Map<string, JsonRecord>();
+  // "Oct 01 2026" is read as a calendar date, never through the machine's timezone (a run east of UTC wrote a second Oct 01 row).
   for (const row of previous) {
-    const epoch = Date.parse(String(row.Date));
-    if (Number.isFinite(epoch)) byDate.set(new Date(epoch).toISOString().slice(0, 10), row);
+    const iso = isoFromEdgar(row.Date);
+    if (iso) byDate.set(iso, row);
   }
   for (const day of fresh) {
     const [row] = historyRows([day]);
@@ -2619,13 +2620,13 @@ export function mergeHistory(previous: JsonRecord[], fresh: ChartDay[]): JsonRec
   return [...byDate].sort(([a], [b]) => a.localeCompare(b)).map(([, row]) => row);
 }
 
-function chartDaysFromRows(rows: JsonRecord[]): ChartDay[] {
+export function chartDaysFromRows(rows: JsonRecord[]): ChartDay[] {
   return rows.flatMap((row) => {
-    const date = new Date(Date.parse(String(row.Date)));
+    const date = isoFromEdgar(row.Date);
     const close = numberOrNull(row.Close);
     const adjClose = numberOrNull(row['Adj Close']);
-    return Number.isFinite(date.getTime()) && close !== null && adjClose !== null
-      ? [{ date: date.toISOString().slice(0, 10), close, adjClose, volume: numberOrNull(row.Volume) ?? 0 }]
+    return date && close !== null && adjClose !== null
+      ? [{ date, close, adjClose, volume: numberOrNull(row.Volume) ?? 0 }]
       : [];
   });
 }
@@ -2826,6 +2827,22 @@ async function resolveNportFilings(
     outputNote(`[ edgar    ] ${fund.ticker}: ${errorMessage(error)}`);
   }
   return null;
+}
+
+/** N-PORT candidates newest report period first (an amendment of an older period filed later must not come first), then newest filing. */
+export function newestPeriodFirst(candidates: NportAccession[]): NportAccession[] {
+  return [...candidates].sort((a, b) => (b.reportDate || '').localeCompare(a.reportDate || '') || (b.filed || '').localeCompare(a.filed || ''));
+}
+
+/**
+ * An N-PORT filing replaces published holdings only when its report period is strictly newer than theirs. Nothing published
+ * yet (no rows) -> any filing; published rows with an unknown date, or a filing without a period -> keep the published sheet.
+ */
+export function nportHoldingsAreNewer(repPdDate: string | null | undefined, published: { totalRows?: unknown; asOfDate?: unknown } | null | undefined): boolean {
+  if (!published || !(Number(published.totalRows) > 0)) return true;
+  const iso = /^\d{4}-\d{2}-\d{2}$/;
+  const filing = String(repPdDate ?? ''), current = String(published.asOfDate ?? '');
+  return iso.test(filing) && iso.test(current) && filing > current;
 }
 
 // One document is fetched at most once per run, even when several funds scan
@@ -3144,8 +3161,9 @@ async function processFund(
       const resolved = await resolveNportFilings(fund, config);
       if (resolved) {
         let checked = 0;
-        for (const candidate of resolved.candidates) {
-          if ((!needHoldings || holdingsEdgar) && nportFilings.length >= wanted) break;
+        let holdingsDecided = false; // the newest filing of this series with positions decides; older ones never replace holdings
+        for (const candidate of newestPeriodFirst(resolved.candidates)) {
+          if ((!needHoldings || holdingsDecided) && nportFilings.length >= wanted) break;
           let parsed: ParsedNport;
           try {
             parsed = await loadNportDocument(candidate, config);
@@ -3156,7 +3174,12 @@ async function processFund(
           checked += 1;
           if (!nportBelongsToFund(parsed, { seriesId: resolved.seriesId }, fund)) continue;
           nportFilings.push(parsed);
-          if (needHoldings && !holdingsEdgar && parsed.holdings.length) {
+          if (needHoldings && !holdingsDecided && parsed.holdings.length) {
+            holdingsDecided = true;
+            if (!nportHoldingsAreNewer(parsed.repPdDate, previousMeta.holdings)) {
+              outputNote(`[ edgar    ] ${ticker}: N-PORT-P as of ${parsed.repPdDate || 'an unknown date'} is not newer than the published holdings (${previousMeta.holdings?.asOfDate ?? 'unknown date'}); kept them`);
+              continue;
+            }
             holdingsEdgar = parsed;
             nportAccession = candidate.accession;
             holdings = {

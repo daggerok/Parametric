@@ -16,6 +16,7 @@ import {
   parseTopHoldings, pickEftsCik, priceReturns, proxyPayload, readConfig, resolveControls, runPool, runtimeControls, totalToAnnualized,
   edgarSeriesFilingsUrl, filingDocumentUrl, nportQuarterReturns, parseProspectusFacts, parseSubmissionDocuments, resetRunState, runFailed, runHealth,
   sourceGate, withRequestLane, ISSUER_UA, indexRowFromMeta, retainIssuerSections, closedFund,
+  chartDaysFromRows, newestPeriodFirst, nportHoldingsAreNewer,
 } from './update-data';
 
 const ROOT = new URL('../', import.meta.url);
@@ -656,6 +657,20 @@ describe('parsing 4', () => {
   });
 });
 
+describe('parsing 5', () => {
+  test('SEC: N-PORT holdings come from the newest report period and replace published ones only when strictly newer', () => {
+    const at = (accession: string, reportDate: string, filed: string) => ({ accession, reportDate, filed, url: accession });
+    // an amendment of an older period filed later does not come first
+    expect(newestPeriodFirst([at('q2', '2026-06-30', '2026-08-21'), at('q1-amended', '2026-03-31', '2026-09-02'), at('q3', '2026-09-30', '2026-11-25')]).map((c) => c.accession))
+      .toEqual(['q3', 'q2', 'q1-amended']);
+    expect(newestPeriodFirst([at('a', '', '2026-08-21'), at('b', '', '2026-09-02')]).map((c) => c.accession)).toEqual(['b', 'a']);
+    const published = { totalRows: 194, asOfDate: '2026-06-30' };
+    expect([nportHoldingsAreNewer('2026-03-31', published), nportHoldingsAreNewer('2026-06-30', published), nportHoldingsAreNewer('2026-09-30', published)]).toEqual([false, false, true]);
+    expect([nportHoldingsAreNewer('2026-03-31', undefined), nportHoldingsAreNewer('2026-03-31', { totalRows: 0, asOfDate: null })]).toEqual([true, true]);
+    expect([nportHoldingsAreNewer('', published), nportHoldingsAreNewer('2026-09-30', { totalRows: 194, asOfDate: null })]).toEqual([false, false]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // metrics: null for young horizons, one key set, returnsBasis + performanceAsOf, official over derived
 // ---------------------------------------------------------------------------
@@ -757,6 +772,17 @@ describe('metrics 2', () => {
     expect(inferDistributionFrequency(monthly)).toEqual({ frequency: 'Monthly', paymentsPerYear: 12 });
     expect(inferDistributionFrequency([0, 1, 2, 3].map((i) => ({ epoch: Date.UTC(2026, i * 3, 21) / 1000, amount: 0.05 }))).frequency).toBe('Quarterly');
     expect(inferDistributionFrequency([]).paymentsPerYear).toBeNull();
+  });
+
+  test('published history dates are calendar dates: the same rows and dates in every timezone', () => {
+    const previous = [{ Date: 'Oct 01 2026', Close: '10', 'Adj Close': '10', Volume: '1' }];
+    const fresh = [{ date: '2026-10-01', close: 10, adjClose: 10, volume: 1 }, { date: '2026-10-02', close: 11, adjClose: 11, volume: 1 }];
+    for (const tz of ['UTC', 'America/New_York', 'Asia/Tokyo', 'Europe/Berlin']) {
+      process.env.TZ = tz;
+      const merged = mergeHistory(previous, fresh);
+      expect(merged.map((row) => row.Date)).toEqual(['Oct 01 2026', 'Oct 02 2026']);
+      expect(chartDaysFromRows(merged).map((day) => day.date)).toEqual(['2026-10-01', '2026-10-02']);
+    }
   });
 
   test('dates: Edgar labels convert to ISO and the quarter anchor is the last completed quarter (UTC)', () => {
@@ -986,7 +1012,8 @@ describe('pipeline 2', () => {
       freeze();
       // a filing whose weight tag was renamed: every position parses with a 0 weight, so the weights add up to 0
       const fixtures = join(dir, 'fixtures.json');
-      writeFileSync(fixtures, readFileSync(fixtures, 'utf8').replace(/pctVal>/g, 'pctValue>'));
+      // (a newer report period: a filing that is not newer than the published holdings never reaches the guard)
+      writeFileSync(fixtures, readFileSync(fixtures, 'utf8').replace(/pctVal>/g, 'pctValue>').replace('<repPdDate>2026-06-30', '<repPdDate>2026-09-30'));
       const summary = join(dir, 'summary.md');
       expect(run({ TICKERS: 'PAPI', EDGAR_FALLBACK: 'true', GITHUB_STEP_SUMMARY: summary }).exitCode).toBe(0); // other sources answered: stays green
       expect(readFileSync(summary, 'utf8')).toContain('- failed: 1');
@@ -1162,6 +1189,19 @@ describe('pipeline 3', () => {
       writeFileSync(indexFile, JSON.stringify(index));
       expect(run({ TICKERS: 'PEPS' }).exitCode).toBe(0);
       expect(indexRows(files()).find((row) => row.ticker === 'GHST')).toEqual(rebuilt);
+    });
+  });
+
+  test('when the newest N-PORT-P document fails, an older filing never replaces the fresher published holdings', () => {
+    withSandbox(({ run, files }) => {
+      expect(run({ EDGAR_FALLBACK: 'true' }).exitCode).toBe(0);
+      const published = files();
+      expect(JSON.parse(published['funds/PAPI/meta.json']).holdings).toMatchObject({ asOfDate: '2026-06-30' });
+      // the 2026-06-30 document fails, the 2026-03-31 one still answers
+      expect(run({ TICKERS: 'PAPI', EDGAR_FALLBACK: 'true' }, ['000207169126018745/primary_doc.xml']).exitCode).toBe(0);
+      const after = files();
+      expect(JSON.parse(after['funds/PAPI/meta.json']).holdings).toEqual(JSON.parse(published['funds/PAPI/meta.json']).holdings);
+      for (const name of Object.keys(published).filter((path) => path.startsWith('funds/PAPI/holdings/'))) expect(after[name]).toBe(published[name]);
     });
   });
 
