@@ -30,43 +30,43 @@
   "display": "0.29%",
   "grossDisplay": "0.29%",
   "netDisplay": "0.29%",
-  "asOf": "Oct 23 2026",
+  "asOf": "Oct 28 2026",
   "source": "official Eaton Vance / MSIM product data (net and gross expense ratio; terValue is the net ratio)"
  },
  "nav": {
-  "display": "$35.44",
-  "value": 35.4377,
-  "asOfDate": "2026-10-23",
+  "display": "$35.74",
+  "value": 35.7433,
+  "asOfDate": "2026-10-28",
   "source": "official Eaton Vance / MSIM product data (pricing)"
  },
  "marketPrice": {
-  "display": "$35.47",
-  "value": 35.47,
-  "asOfDate": "2026-10-23",
+  "display": "$35.81",
+  "value": 35.81,
+  "asOfDate": "2026-10-28",
   "source": "official Eaton Vance / MSIM product data (market price)"
  },
  "premiumDiscount": {
-  "display": "0.09%",
-  "value": 0.09,
-  "asOfDate": "2026-10-23",
+  "display": "0.19%",
+  "value": 0.19,
+  "asOfDate": "2026-10-28",
   "source": "computed from the issuer NAV and market price of the same date",
-  "amount": 0.03
+  "amount": 0.07
  },
  "bidAskSpread": {
   "display": "0.28%",
   "value": 0.28,
-  "asOfDate": "2026-10-23",
+  "asOfDate": "2026-10-28",
   "source": "official Eaton Vance / MSIM product data (median bid/ask spread)"
  },
  "aum": {
-  "display": "$150.61 M",
-  "value": 150610225,
-  "asOfDate": "Oct 23 2026",
+  "display": "$151.91 M",
+  "value": 151909025,
+  "asOfDate": "Oct 28 2026",
   "source": "derived: shares outstanding x NAV (the issuer publishes no net assets figure)"
  },
  "yields": {
-  "dividendYield": 0.55,
-  "dividendYieldText": "0.55%",
+  "dividendYield": 0.54,
+  "dividendYieldText": "0.54%",
   "dividendYieldBasis": "indicated",
   "dividendYieldKind": "indicated (latest distribution x payments per year / market price)",
   "secYield": 0.82,
@@ -85,8 +85,8 @@
    "ytdText": "8.51%",
    "yr1": 10.72,
    "yr1Text": "10.72%",
-   "yr3": 15.52,
-   "yr3Text": "15.52%",
+   "yr3": 15.89,
+   "yr3Text": "15.89%",
    "yr5": null,
    "yr5Text": "—",
    "yr10": null,
@@ -182,8 +182,8 @@
    "history/001.json"
   ],
   "pageSize": 1000,
-  "totalRows": 756,
-  "asOf": "Oct 23 2026",
+  "totalRows": 760,
+  "asOf": "Oct 29 2026",
   "source": "Yahoo Finance public chart API (adjusted close)"
  }
 }
