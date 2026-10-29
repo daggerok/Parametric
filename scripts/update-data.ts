@@ -132,7 +132,7 @@ function outputFundLine(index: number, total: number, ticker: string, status: st
     field('sec', outputPercent(data.secYield ?? data.yields?.secYield ?? metrics.secYield)),
     field('wp', data.workplaceRaw),
   ].filter(part => part !== '').join(' ');
-  return `[ ${String(index).padStart(width)}/${String(total).padEnd(width)}  ] ${outputClean(ticker).padEnd(5)} ${status.padEnd(9)}${detail ? ` ${detail}` : ''}${reason ? ` reason=${outputClean(reason)}` : ''}`;
+  return `[ ${`${String(index).padStart(width)}/${total}`.padEnd(8)} ] ${outputClean(ticker).padEnd(5)} ${status.padEnd(9)}${detail ? ` ${detail}` : ''}${reason ? ` reason=${outputClean(reason)}` : ''}`;
 }
 function outputCreateReporter(root: URL | string, total: number) {
   let completed = 0;
@@ -2634,7 +2634,7 @@ let secState: { funds: Promise<Map<string, NportSeriesRef>> | null; names: Promi
 function loadFundTickerMap(config: UpdaterConfig): Promise<Map<string, NportSeriesRef>> {
   secState.funds ??= (async () => {
     try {
-      const payload = await fetchSecJson(SEC_FUND_TICKERS_URL, '[edgar   ] fund ticker table', config);
+      const payload = await fetchSecJson(SEC_FUND_TICKERS_URL, '[ edgar    ] fund ticker table', config);
       const map = parseSecFundTickers(payload);
       outputNote(`[ edgar    ] SEC fund ticker table: ${Array.isArray(payload?.data) ? payload.data.length : map.size} ETF / mutual-fund share classes`);
       return map;
@@ -2649,7 +2649,7 @@ function loadFundTickerMap(config: UpdaterConfig): Promise<Map<string, NportSeri
 function loadCompanyNames(config: UpdaterConfig): Promise<Map<string, string>> {
   secState.names ??= (async () => {
     try {
-      const payload = await fetchSecJson(SEC_COMPANY_TICKERS_URL, '[edgar   ] company ticker table', config);
+      const payload = await fetchSecJson(SEC_COMPANY_TICKERS_URL, '[ edgar    ] company ticker table', config);
       outputNote(`[ edgar    ] SEC company ticker table: ${Object.keys(payload ?? {}).length} issuer names`);
       return parseSecCompanyNames(payload);
     } catch (error) {
@@ -2689,7 +2689,7 @@ async function resolveRegistrantCik(fund: CatalogFund, config: UpdaterConfig): P
   }
   if (!cik) {
     try {
-      const payload = await fetchSecJson(eftsSearchUrl(fund.ticker), `[edgar   ] search ${fund.ticker}`, config);
+      const payload = await fetchSecJson(eftsSearchUrl(fund.ticker), `[ edgar    ] search ${fund.ticker}`, config);
       cik = pickEftsCik(payload, fund.name);
     } catch (error) {
       outputNote(`[ edgar    ] search ${fund.ticker}: ${errorMessage(error)}`);
@@ -2715,14 +2715,14 @@ async function loadOwnNportFilings(fund: { ticker: string; cik: string; seriesId
   if (count <= 0) return [];
   let known: NportCandidate[] = [];
   try {
-    known = parseNportSubmissions(JSON.parse(await secText(nportSubmissionsUrl(fund.cik), `[edgar   ] ${fund.ticker} N-PORT periods`, config)));
+    known = parseNportSubmissions(JSON.parse(await secText(nportSubmissionsUrl(fund.cik), `[ edgar    ] ${fund.ticker} N-PORT periods`, config)));
   } catch (error) {
     outputNote(`[ edgar    ] ${fund.ticker}: ${errorMessage(error)}`);
   }
   let candidates: NportCandidate[] | null = null;
   if (fund.seriesId) {
     try {
-      candidates = parseNportFeed(await secText(nportSeriesFeedUrl(fund.seriesId), `[edgar   ] ${fund.ticker} N-PORT filings`, config));
+      candidates = parseNportFeed(await secText(nportSeriesFeedUrl(fund.seriesId), `[ edgar    ] ${fund.ticker} N-PORT filings`, config));
     } catch (error) {
       outputNote(`[ edgar    ] ${fund.ticker} series ${fund.seriesId}: ${errorMessage(error)} — scanning registrant submissions`);
     }
@@ -2883,7 +2883,7 @@ const submissionDocumentCache = new Map<string, Promise<Map<string, string>>>();
 function loadSubmissionDocuments(cik: string, config: UpdaterConfig): Promise<Map<string, string>> {
   let cached = submissionDocumentCache.get(cik);
   if (!cached) {
-    cached = fetchSecJson(`${SEC_DATA_HOST}/submissions/CIK${cik.padStart(10, '0')}.json`, `[edgar   ] ${cik} submissions`, config).then((json) => parseSubmissionDocuments(json, '497K'));
+    cached = fetchSecJson(`${SEC_DATA_HOST}/submissions/CIK${cik.padStart(10, '0')}.json`, `[ edgar    ] ${cik} submissions`, config).then((json) => parseSubmissionDocuments(json, '497K'));
     submissionDocumentCache.set(cik, cached);
   }
   return cached;
@@ -2892,7 +2892,7 @@ export type ProspectusRead = { facts: ProspectusFacts; accession: string; filed:
 async function loadProspectus(fund: CatalogFund, config: UpdaterConfig): Promise<ProspectusRead | null> {
   const ref = (await loadFundTickerMap(config)).get(fund.ticker);
   if (!ref?.seriesId) return null;
-  const atom = await fetchSecText(edgarSeriesFilingsUrl(ref.seriesId, 6, '497K'), `[edgar   ] ${fund.ticker} 497K list`, config, 'xml');
+  const atom = await fetchSecText(edgarSeriesFilingsUrl(ref.seriesId, 6, '497K'), `[ edgar    ] ${fund.ticker} 497K list`, config, 'xml');
   const filings = parseEdgarAtomFilings(atom, '497K').slice(0, PROSPECTUS_CANDIDATE_LIMIT);
   if (!filings.length) return null;
   const documents = await loadSubmissionDocuments(ref.cik, config);
@@ -3021,7 +3021,7 @@ async function processFund(
   let keptSections: IssuerSection[] = [];
   if (!config.skipIssuer && (!product || product.sections) && Object.keys(previousMeta).length) {
     ({ product, kept: keptSections } = retainIssuerSections(product, ticker, previousMeta));
-    if (keptSections.length) console.log(`[ ${'kept'.padEnd(9)}] ${ticker}: the issuer read ${issuerAnswered ? 'came back partial' : 'failed'}, kept the published ${keptSections.join(', ')}`);
+    if (keptSections.length) console.log(`[ ${'kept'.padEnd(8)} ] ${ticker}: the issuer read ${issuerAnswered ? 'came back partial' : 'failed'}, kept the published ${keptSections.join(', ')}`);
   }
   const known = (section: IssuerSection): boolean => Boolean(product && (!product.sections || product.sections[section] || product.kept?.includes(section)));
   const secFacts = !known('detail');
