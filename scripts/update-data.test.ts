@@ -1396,13 +1396,13 @@ describe('network 2', () => {
     });
     configureProxyGate(0);
     const config = { maxRetries: 1, secUa: 'test ua' } as any;
-    const payload = await withRequestLane(0, () => fetchSecJson('https://www.sec.gov/files/company_tickers_mf.json', '[edgar   ] test table', config));
+    const payload = await withRequestLane(0, () => fetchSecJson('https://www.sec.gov/files/company_tickers_mf.json', '[ edgar    ] test table', config));
     expect(payload).toEqual({ fields: ['cik', 'seriesId', 'classId', 'symbol'], data: [[1676326, 'S000082252', 'C000245536', 'PAPI']] });
     expect(calls).toEqual(['https://www.sec.gov/files/company_tickers_mf.json', 'https://r.jina.ai/https://www.sec.gov/files/company_tickers_mf.json']);
     expect(headers[1]['X-Return-Format']).toBeUndefined();
     calls.length = 0;
     headers.length = 0;
-    await withRequestLane(0, () => fetchSecText('https://www.sec.gov/Archives/edgar/data/1676326/x/primary_doc.xml', '[edgar   ] test nport', config, 'xml'));
+    await withRequestLane(0, () => fetchSecText('https://www.sec.gov/Archives/edgar/data/1676326/x/primary_doc.xml', '[ edgar    ] test nport', config, 'xml'));
     expect(calls).toEqual(['https://r.jina.ai/https://www.sec.gov/Archives/edgar/data/1676326/x/primary_doc.xml']);
     expect(headers[0]['X-Return-Format']).toBe('html');
   });
