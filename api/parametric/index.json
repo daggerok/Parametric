@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-10-29T20:31:18Z",
+ "generatedAt": "2026-10-29T22:02:38Z",
  "source": {
   "provider": "Eaton Vance / MSIM product pages (ETF catalog, fund facts, returns and distributions); SEC EDGAR Form N-PORT-P holdings; Yahoo Finance chart API (daily NAV history and dividends)",
   "site": "https://www.eatonvance.com",
@@ -87,6 +87,13 @@
     "dividendYieldBasis": "indicated",
     "secYield": 2.69,
     "secYieldText": "2.69%",
+    "week52Low": 25.24,
+    "week52High": 28.45,
+    "range52w": 94.08,
+    "range52wClose": 28.26,
+    "range52wAsOf": "2026-10-29",
+    "range52wSince": null,
+    "range52wBasis": "Close",
     "returnsBasis": "mixed: official Eaton Vance / MSIM month-end NAV returns where the fund detail page publishes them; remaining periods are estimates derived from the Yahoo Finance adjusted daily series, not official NAV returns",
     "performanceAsOf": "2026-09-30"
    },
@@ -168,6 +175,13 @@
     "dividendYieldBasis": "indicated",
     "secYield": 1.01,
     "secYieldText": "1.01%",
+    "week52Low": 27.136,
+    "week52High": 33.7,
+    "range52w": 94.36,
+    "range52wClose": 33.33,
+    "range52wAsOf": "2026-10-29",
+    "range52wSince": null,
+    "range52wBasis": "Close",
     "returnsBasis": "official Eaton Vance / MSIM month-end NAV returns (fund detail page)",
     "performanceAsOf": "2026-09-30"
    },
@@ -249,6 +263,13 @@
     "dividendYieldBasis": "indicated",
     "secYield": 0.82,
     "secYieldText": "0.82%",
+    "week52Low": 31.47,
+    "week52High": 35.855,
+    "range52w": 96.98,
+    "range52wClose": 35.7224,
+    "range52wAsOf": "2026-10-29",
+    "range52wSince": null,
+    "range52wBasis": "Close",
     "returnsBasis": "mixed: official Eaton Vance / MSIM month-end NAV returns where the fund detail page publishes them; remaining periods are estimates derived from the Yahoo Finance adjusted daily series, not official NAV returns",
     "performanceAsOf": "2026-09-30"
    },
