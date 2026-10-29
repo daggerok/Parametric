@@ -935,6 +935,8 @@ describe('pipeline', () => {
         expect(row.dataFile).toBe(`./funds/${row.ticker}/meta.json`);
         expect(published[`funds/${row.ticker}/meta.json`]).toBeDefined();
         expect(Object.keys(row.metrics).sort()).toEqual(Object.keys(rows[0].metrics).sort());
+        // the 52-week keys of the range-52w block sit in every row, in front of returnsBasis and performanceAsOf
+        expect(Object.keys(row.metrics).slice(-9)).toEqual(['week52Low', 'week52High', 'range52w', 'range52wClose', 'range52wAsOf', 'range52wSince', 'range52wBasis', 'returnsBasis', 'performanceAsOf']);
         for (const key of ['tr3y', 'tr5y', 'tr10y', 'cagr3y', 'cagr5y', 'cagr10y']) expect(row.metrics[key]).toBeNull();
         expect(row.metrics.returnsBasis).toContain('official');
         expect(row.metrics.performanceAsOf).toBe('2026-09-30');
