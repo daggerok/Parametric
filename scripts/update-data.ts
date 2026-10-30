@@ -3099,9 +3099,11 @@ async function processFund(
   if (!config.skipYahoo) {
     try {
       const fetched = parseChart(await fetchJson(chartUrl(ticker, config), `[ chart    ] ${ticker}`, yahooHeaders(), config));
-      // A HISTORY_RANGE window never shrinks the published history and distributions (and with them 3y, 5y, 10y and since inception)
-      chart = /^\d+y$/i.test(config.historyRange) ? mergeWindowedChart(fetched, await readPreviousSheet(ticker, 'history'), Array.isArray(previousMeta.distributions?.rows) ? previousMeta.distributions.rows : []) : fetched;
-      if (!chart) throw new Error(`the ${config.historyRange} chart window does not join the published history`);
+      // A fresh chart never shrinks the published history and distributions (and with them 3y, 5y, 10y and since inception):
+      // this covers a HISTORY_RANGE window and a truncated `max` answer (2026-10-29: Yahoo served 2 bars for some funds).
+      // A full `max` answer starts at inception: nothing older is published, so the chart stays unchanged
+      chart = mergeWindowedChart(fetched, await readPreviousSheet(ticker, 'history'), Array.isArray(previousMeta.distributions?.rows) ? previousMeta.distributions.rows : []);
+      if (!chart) throw new Error(`chart does not join the published history (${config.historyRange}, ${fetched.days.length} days)`);
     } catch (error) {
       outputNote(`[ chart    ] ${ticker}: ${errorMessage(error)} — keeping previous history`);
     }
