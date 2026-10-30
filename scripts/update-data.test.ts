@@ -1262,6 +1262,14 @@ describe('pipeline 4', () => {
       expect(run({ MOCK_CHART: JSON.stringify(windowed), HISTORY_RANGE: '1y' }).exitCode).toBe(0);
       expect(files()).toEqual(first);
       expect(rewritten()).toEqual([]);
+      // a truncated `max` answer (Yahoo served 2 bars for some funds on 2026-10-29) never shrinks the history either:
+      // one that joins the published days keeps them all, one that does not join keeps the fund as published
+      expect(run({ MOCK_CHART: JSON.stringify(windowed) }).exitCode).toBe(0);
+      expect(files()).toEqual(first);
+      const lone = { timestamp: [day(0)], close: [32], adjclose: [31] };
+      expect(run({ MOCK_CHART: JSON.stringify(lone) }).exitCode).toBe(0);
+      expect(indexRows(files()).find((row) => row.ticker === 'PAPI').history).toBe(indexRows(first).find((row) => row.ticker === 'PAPI').history);
+      expect(rewritten()).toEqual([]);
     });
   });
 
