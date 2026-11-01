@@ -2,7 +2,7 @@
  "ticker": "PHEQ",
  "page": 1,
  "pageSize": 1000,
- "totalRows": 760,
+ "totalRows": 761,
  "headers": [
   "Date",
   "Close",
@@ -4566,9 +4566,15 @@
   },
   {
    "Date": "Oct 29 2026",
-   "Close": "35.722401",
+   "Close": "35.722",
    "Adj Close": "35.72",
-   "Volume": "5647"
+   "Volume": "5600"
+  },
+  {
+   "Date": "Oct 30 2026",
+   "Close": "35.257999",
+   "Adj Close": "35.26",
+   "Volume": "7000"
   }
  ]
 }
