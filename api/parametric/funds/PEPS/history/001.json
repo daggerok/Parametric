@@ -2,7 +2,7 @@
  "ticker": "PEPS",
  "page": 1,
  "pageSize": 1000,
- "totalRows": 385,
+ "totalRows": 390,
  "headers": [
   "Date",
   "Close",
@@ -2319,6 +2319,36 @@
    "Close": "32.599998",
    "Adj Close": "32.6",
    "Volume": "500"
+  },
+  {
+   "Date": "Nov 02 2026",
+   "Close": "32.354",
+   "Adj Close": "32.35",
+   "Volume": "1400"
+  },
+  {
+   "Date": "Nov 03 2026",
+   "Close": "32.521999",
+   "Adj Close": "32.52",
+   "Volume": "700"
+  },
+  {
+   "Date": "Nov 04 2026",
+   "Close": "33.044998",
+   "Adj Close": "33.04",
+   "Volume": "1200"
+  },
+  {
+   "Date": "Nov 05 2026",
+   "Close": "31.419001",
+   "Adj Close": "31.42",
+   "Volume": "900"
+  },
+  {
+   "Date": "Nov 06 2026",
+   "Close": "31.549999",
+   "Adj Close": "31.55",
+   "Volume": "1600"
   }
  ]
 }
