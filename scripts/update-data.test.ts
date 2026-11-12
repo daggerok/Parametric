@@ -935,8 +935,12 @@ describe('pipeline', () => {
         expect(row.dataFile).toBe(`./funds/${row.ticker}/meta.json`);
         expect(published[`funds/${row.ticker}/meta.json`]).toBeDefined();
         expect(Object.keys(row.metrics).sort()).toEqual(Object.keys(rows[0].metrics).sort());
-        // the 52-week keys of the range-52w block sit in every row, in front of returnsBasis and performanceAsOf
-        expect(Object.keys(row.metrics).slice(-9)).toEqual(['week52Low', 'week52High', 'range52w', 'range52wClose', 'range52wAsOf', 'range52wSince', 'range52wBasis', 'returnsBasis', 'performanceAsOf']);
+        // the 52-week keys of the range-52w block and then the swing keys of the swing block (from the Close column of the same
+        // history pages) sit in every row, in front of returnsBasis and performanceAsOf
+        expect(Object.keys(row.metrics).slice(-18, -11)).toEqual(['week52Low', 'week52High', 'range52w', 'range52wClose', 'range52wAsOf', 'range52wSince', 'range52wBasis']);
+        expect(Object.keys(row.metrics).slice(-11, -2)).toEqual(['pctFrom52wHigh', 'athPrice', 'athDate', 'athBasis', 'pctFromAth', 'volatility1y', 'sigmaFromMean60d', 'high60d', 'low60d']);
+        expect(Object.keys(row.metrics).slice(-2)).toEqual(['returnsBasis', 'performanceAsOf']);
+        expect([typeof row.metrics.athPrice, row.metrics.athBasis]).toEqual(['number', expect.stringMatching(/^daily closes since \d{4}-\d{2}-\d{2}$/)]);
         for (const key of ['tr3y', 'tr5y', 'tr10y', 'cagr3y', 'cagr5y', 'cagr10y']) expect(row.metrics[key]).toBeNull();
         expect(row.metrics.returnsBasis).toContain('official');
         expect(row.metrics.performanceAsOf).toBe('2026-09-30');

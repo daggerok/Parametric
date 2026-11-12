@@ -81,6 +81,13 @@ Each fund carries a derived `metrics` object that powers the catalog columns sha
   | `official-trailing-12m`, `official-distribution-rate`, `computed-trailing-12m` | part of the shared vocabulary, not used by this brand |
 
 - `secYield` - 30-day SEC yield when the catalog publishes it
+- Swing metrics (shared `swing` block, the formulas of the Stocks feed) from the split-adjusted, not dividend-adjusted daily `Close` column of the published history, with the last close as the price; `null` (never `0`) when the history is too short:
+  - `pctFrom52wHigh` - last close against the highest close of the last 52 weeks, in percent
+  - `athPrice`, `athDate`, `athBasis` - highest close of the whole history, its date and the history it covers (`daily closes since <first date>`)
+  - `pctFromAth` - last close against `athPrice`, in percent
+  - `volatility1y` - annualized volatility of the last 252 daily log returns, in percent (needs 253 closes)
+  - `sigmaFromMean60d` - distance of the last close from the mean of the last 60 closes, in sample standard deviations
+  - `high60d`, `low60d` - highest and lowest of the last 60 closes
 - `returnsBasis` - mandatory non-empty label of how the returns were computed: `official Eaton Vance / MSIM month-end NAV returns (fund detail page)`, `derived from the Yahoo Finance adjusted daily series, not official NAV returns`, or a `mixed: ...` text when official figures are completed with Yahoo-derived estimates for the periods the issuer does not publish
 - `performanceAsOf` - mandatory ISO `YYYY-MM-DD` date the returns are as of: the "As of" date of the issuer's Returns table when the figures are official (not the NAV date), or the last Yahoo close date when they are derived; `null` only when truly unknown. Both fields are the last two keys of `metrics` and are repeated in `returns` of each fund's `meta.json`
 
