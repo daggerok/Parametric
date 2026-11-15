@@ -840,6 +840,15 @@ globalThis.fetch = async (input) => {
     fixtures.yahoo.chart.result[0].timestamp = series.timestamp;
     fixtures.yahoo.chart.result[0].indicators = { quote: [{ close: series.close, volume: series.close.map(() => 100) }], adjclose: [{ adjclose: series.adjclose }] };
   }
+  // the dividends block's own request (swingChartUrl: includePrePost=false): listing date = first bar, one dividend inside the last 12 months
+  if (url.startsWith('https://query1.finance.yahoo.com/') && url.includes('includePrePost=false')) {
+    const copy = JSON.parse(JSON.stringify(fixtures.yahoo));
+    const result = copy.chart.result[0];
+    const paid = Date.parse('2026-09-21T00:00:00Z') / 1000;
+    result.meta.firstTradeDate = result.timestamp[0];
+    result.events = { dividends: { [paid]: { amount: 0.25, date: paid } } };
+    return new Response(JSON.stringify(copy));
+  }
   if (url.startsWith('https://query1.finance.yahoo.com/')) return new Response(JSON.stringify(fixtures.yahoo));
   if (process.env.MOCK_ISSUER_DENIED === '1' && /eatonvance\\.com/.test(url)) return new Response('Access Denied', { status: 403 });
   for (const [part, body] of fixtures.sec) if (url.includes(part)) return new Response(body);
@@ -937,8 +946,12 @@ describe('pipeline', () => {
         expect(Object.keys(row.metrics).sort()).toEqual(Object.keys(rows[0].metrics).sort());
         // the 52-week keys of the range-52w block and then the swing keys of the swing block (from the Close column of the same
         // history pages) sit in every row, in front of returnsBasis and performanceAsOf
-        expect(Object.keys(row.metrics).slice(-18, -11)).toEqual(['week52Low', 'week52High', 'range52w', 'range52wClose', 'range52wAsOf', 'range52wSince', 'range52wBasis']);
-        expect(Object.keys(row.metrics).slice(-11, -2)).toEqual(['pctFrom52wHigh', 'athPrice', 'athDate', 'athBasis', 'pctFromAth', 'volatility1y', 'sigmaFromMean60d', 'high60d', 'low60d']);
+        expect(Object.keys(row.metrics).slice(-24, -17)).toEqual(['week52Low', 'week52High', 'range52w', 'range52wClose', 'range52wAsOf', 'range52wSince', 'range52wBasis']);
+        expect(Object.keys(row.metrics).slice(-17, -8)).toEqual(['pctFrom52wHigh', 'athPrice', 'athDate', 'athBasis', 'pctFromAth', 'volatility1y', 'sigmaFromMean60d', 'high60d', 'low60d']);
+        // the dividend keys from the Yahoo dividend events of one daily chart per updated fund (dividends block, own-request mode): one payment
+        // in the last 12 months, no complete year after the listing year, so growth, streak and cut are null (never 0)
+        expect(Object.keys(row.metrics).slice(-8, -2)).toEqual(['dividendRate', 'dividendGrowth', 'dividendGrowth3y', 'dividendGrowth5y', 'dividendStreak', 'dividendCut10y']);
+        expect(['dividendRate', 'dividendGrowth', 'dividendGrowth3y', 'dividendGrowth5y', 'dividendStreak', 'dividendCut10y'].map((key) => row.metrics[key])).toEqual([0.25, null, null, null, null, null]);
         expect(Object.keys(row.metrics).slice(-2)).toEqual(['returnsBasis', 'performanceAsOf']);
         expect([typeof row.metrics.athPrice, row.metrics.athBasis]).toEqual(['number', expect.stringMatching(/^daily closes since \d{4}-\d{2}-\d{2}$/)]);
         for (const key of ['tr3y', 'tr5y', 'tr10y', 'cagr3y', 'cagr5y', 'cagr10y']) expect(row.metrics[key]).toBeNull();
@@ -948,6 +961,16 @@ describe('pipeline', () => {
         expect(row.terGrossValue).toBe(0.35);
       }
       expect(JSON.parse(published['funds/PAPI/meta.json']).expense).toMatchObject({ net: 0.29, gross: 0.35 });
+    });
+  });
+
+  test('the dividends block requests the daily chart of the updated fund only', () => {
+    withSandbox(({ run, dir }) => {
+      expect(run().exitCode).toBe(0);
+      const log = join(dir, 'dividend-requests.log');
+      expect(run({ TICKERS: 'PAPI', MOCK_LOG: log }).exitCode).toBe(0);
+      const requests = readFileSync(log, 'utf8').split('\n').filter(Boolean);
+      expect(requests.filter((url) => /chart\/[A-Z]+\?period1=0&.*includePrePost=false/.test(url)).map((url) => /chart\/([A-Z]+)\?/.exec(url)![1])).toEqual(['PAPI']);
     });
   });
 
