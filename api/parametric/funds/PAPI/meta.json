@@ -30,48 +30,48 @@
   "display": "0.29%",
   "grossDisplay": "0.29%",
   "netDisplay": "0.29%",
-  "asOf": "Nov 06 2026",
+  "asOf": "Nov 13 2026",
   "source": "official Eaton Vance / MSIM product data (net and gross expense ratio; terValue is the net ratio)"
  },
  "nav": {
-  "display": "$28.06",
-  "value": 28.06,
-  "asOfDate": "2026-11-06",
+  "display": "$28.56",
+  "value": 28.5602,
+  "asOfDate": "2026-11-13",
   "source": "official Eaton Vance / MSIM product data (pricing)"
  },
  "marketPrice": {
-  "display": "$28.10",
-  "value": 28.1,
-  "asOfDate": "2026-11-06",
+  "display": "$28.60",
+  "value": 28.6,
+  "asOfDate": "2026-11-13",
   "source": "official Eaton Vance / MSIM product data (market price)"
  },
  "premiumDiscount": {
   "display": "0.14%",
   "value": 0.14,
-  "asOfDate": "2026-11-06",
+  "asOfDate": "2026-11-13",
   "source": "computed from the issuer NAV and market price of the same date",
   "amount": 0.04
  },
  "bidAskSpread": {
   "display": "0.25%",
   "value": 0.25,
-  "asOfDate": "2026-11-06",
+  "asOfDate": "2026-11-13",
   "source": "official Eaton Vance / MSIM product data (median bid/ask spread)"
  },
  "aum": {
-  "display": "$551.38 M",
-  "value": 551379000,
-  "asOfDate": "Nov 06 2026",
+  "display": "$576.92 M",
+  "value": 576916040,
+  "asOfDate": "Nov 13 2026",
   "source": "derived: shares outstanding x NAV (the issuer publishes no net assets figure)"
  },
  "yields": {
-  "dividendYield": 6.95,
-  "dividendYieldText": "6.95%",
+  "dividendYield": 6.83,
+  "dividendYieldText": "6.83%",
   "dividendYieldBasis": "indicated",
   "dividendYieldKind": "indicated (latest distribution x payments per year / market price)",
-  "secYield": 2.69,
-  "secYieldText": "2.69%",
-  "secYieldKind": "30-day SEC yield as published by eatonvance.com, as of Nov 05 2026"
+  "secYield": 2.71,
+  "secYieldText": "2.71%",
+  "secYieldKind": "30-day SEC yield as published by eatonvance.com, as of Nov 12 2026"
  },
  "returns": {
   "derivedFrom": "official Eaton Vance / MSIM published returns; month-to-date and history-derived periods use the Yahoo Finance adjusted series",
@@ -278,8 +278,8 @@
    "history/001.json"
   ],
   "pageSize": 1000,
-  "totalRows": 766,
-  "asOf": "Nov 06 2026",
+  "totalRows": 771,
+  "asOf": "Nov 13 2026",
   "source": "Yahoo Finance public chart API (adjusted close)"
  }
 }
