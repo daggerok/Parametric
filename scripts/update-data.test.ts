@@ -841,10 +841,11 @@ globalThis.fetch = async (input) => {
     fixtures.yahoo.chart.result[0].indicators = { quote: [{ close: series.close, volume: series.close.map(() => 100) }], adjclose: [{ adjclose: series.adjclose }] };
   }
   // the dividends block's own request (swingChartUrl: includePrePost=false): listing date = first bar, one dividend inside the last 12 months
+  // on the last bar: MOCK_CHART bars are relative to today, so a fixed date would leave the 12 months or land in a complete year
   if (url.startsWith('https://query1.finance.yahoo.com/') && url.includes('includePrePost=false')) {
     const copy = JSON.parse(JSON.stringify(fixtures.yahoo));
     const result = copy.chart.result[0];
-    const paid = Date.parse('2026-09-21T00:00:00Z') / 1000;
+    const paid = result.timestamp[result.timestamp.length - 1];
     result.meta.firstTradeDate = result.timestamp[0];
     result.events = { dividends: { [paid]: { amount: 0.25, date: paid } } };
     return new Response(JSON.stringify(copy));
