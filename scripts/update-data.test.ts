@@ -846,7 +846,8 @@ globalThis.fetch = async (input) => {
     const copy = JSON.parse(JSON.stringify(fixtures.yahoo));
     const result = copy.chart.result[0];
     const paid = result.timestamp[result.timestamp.length - 1];
-    result.meta.firstTradeDate = result.timestamp[0];
+    // Yahoo keeps the real listing date in meta when it serves a window or a truncated answer: MOCK_LISTED stands for it
+    result.meta.firstTradeDate = process.env.MOCK_LISTED ? Number(process.env.MOCK_LISTED) : result.timestamp[0];
     result.events = { dividends: { [paid]: { amount: 0.25, date: paid } } };
     return new Response(JSON.stringify(copy));
   }
@@ -947,12 +948,14 @@ describe('pipeline', () => {
         expect(Object.keys(row.metrics).sort()).toEqual(Object.keys(rows[0].metrics).sort());
         // the 52-week keys of the range-52w block and then the swing keys of the swing block (from the Close column of the same
         // history pages) sit in every row, in front of returnsBasis and performanceAsOf
-        expect(Object.keys(row.metrics).slice(-24, -17)).toEqual(['week52Low', 'week52High', 'range52w', 'range52wClose', 'range52wAsOf', 'range52wSince', 'range52wBasis']);
-        expect(Object.keys(row.metrics).slice(-17, -8)).toEqual(['pctFrom52wHigh', 'athPrice', 'athDate', 'athBasis', 'pctFromAth', 'volatility1y', 'sigmaFromMean60d', 'high60d', 'low60d']);
+        expect(Object.keys(row.metrics).slice(-58, -51)).toEqual(['week52Low', 'week52High', 'range52w', 'range52wClose', 'range52wAsOf', 'range52wSince', 'range52wBasis']);
+        expect(Object.keys(row.metrics).slice(-51, -42)).toEqual(['pctFrom52wHigh', 'athPrice', 'athDate', 'athBasis', 'pctFromAth', 'volatility1y', 'sigmaFromMean60d', 'high60d', 'low60d']);
         // the dividend keys from the Yahoo dividend events of one daily chart per updated fund (dividends block, own-request mode): one payment
         // in the last 12 months, no complete year after the listing year, so growth, streak and cut are null (never 0)
-        expect(Object.keys(row.metrics).slice(-8, -2)).toEqual(['dividendRate', 'dividendGrowth', 'dividendGrowth3y', 'dividendGrowth5y', 'dividendStreak', 'dividendCut10y']);
-        expect(['dividendRate', 'dividendGrowth', 'dividendGrowth3y', 'dividendGrowth5y', 'dividendStreak', 'dividendCut10y'].map((key) => row.metrics[key])).toEqual([0.25, null, null, null, null, null]);
+        expect(Object.keys(row.metrics).slice(-42, -34)).toEqual(['dividendRate', 'dividendGrowth', 'dividendGrowth3y', 'dividendGrowth5y', 'dividendStreak', 'dividendCut10y', 'paymentsPerYear', 'payFrequency']);
+        expect(['dividendRate', 'dividendGrowth', 'dividendGrowth3y', 'dividendGrowth5y', 'dividendStreak', 'dividendCut10y', 'paymentsPerYear', 'payFrequency'].map((key) => row.metrics[key])).toEqual([0.25, null, null, null, null, null, 1, null]);
+        // the 32 benchmark keys against SPY and QQQ (benchmark block) sit before the returns pair
+        expect(Object.keys(row.metrics).slice(-34, -2)).toEqual(['perf1y', 'perf3y', 'perf5y', 'perf10y', 'perfSi', 'maxDrawdown1y', 'maxDrawdown3y', 'maxDrawdown5y', 'maxDrawdown10y', 'vsSpy1y', 'vsSpy3y', 'vsSpy5y', 'vsSpy10y', 'beta1ySpy', 'corr1ySpy', 'upCapture3ySpy', 'downCapture3ySpy', 'relStrength3mSpy', 'stressReturnSpy', 'stressBasisSpy', 'vsQqq1y', 'vsQqq3y', 'vsQqq5y', 'vsQqq10y', 'beta1yQqq', 'corr1yQqq', 'upCapture3yQqq', 'downCapture3yQqq', 'relStrength3mQqq', 'stressReturnQqq', 'stressBasisQqq', 'benchmarkAsOf']);
         expect(Object.keys(row.metrics).slice(-2)).toEqual(['returnsBasis', 'performanceAsOf']);
         expect([typeof row.metrics.athPrice, row.metrics.athBasis]).toEqual(['number', expect.stringMatching(/^daily closes since \d{4}-\d{2}-\d{2}$/)]);
         for (const key of ['tr3y', 'tr5y', 'tr10y', 'cagr3y', 'cagr5y', 'cagr10y']) expect(row.metrics[key]).toBeNull();
@@ -965,13 +968,13 @@ describe('pipeline', () => {
     });
   });
 
-  test('the dividends block requests the daily chart of the updated fund only', () => {
+  test('the dividends block requests the daily chart of the updated fund only, the benchmark block adds the SPY and the QQQ chart', () => {
     withSandbox(({ run, dir }) => {
       expect(run().exitCode).toBe(0);
       const log = join(dir, 'dividend-requests.log');
       expect(run({ TICKERS: 'PAPI', MOCK_LOG: log }).exitCode).toBe(0);
       const requests = readFileSync(log, 'utf8').split('\n').filter(Boolean);
-      expect(requests.filter((url) => /chart\/[A-Z]+\?period1=0&.*includePrePost=false/.test(url)).map((url) => /chart\/([A-Z]+)\?/.exec(url)![1])).toEqual(['PAPI']);
+      expect(requests.filter((url) => /chart\/[A-Z]+\?period1=0&.*includePrePost=false/.test(url)).map((url) => /chart\/([A-Z]+)\?/.exec(url)![1]).sort()).toEqual(['PAPI', 'QQQ', 'SPY']);
     });
   });
 
@@ -1274,7 +1277,7 @@ describe('pipeline 3', () => {
       for (const name of history) expect(after[name]).toBe(published[name]);
       expect(indexRows(after).map((row) => row.ticker)).toEqual(['PAPI', 'PEPS', 'PHEQ']);
     });
-  });
+  }, 15_000); // the SPY and QQQ benchmark charts fail too (with retries) before the fund chart
 });
 
 describe('pipeline 4', () => {
@@ -1287,15 +1290,15 @@ describe('pipeline 4', () => {
       expect(indexRows(first).find((row) => row.ticker === 'PAPI').metrics.cagr3y).not.toBeNull();
       freeze();
       const windowed = { timestamp: full.timestamp.slice(1), close: full.close.slice(1), adjclose: full.adjclose.slice(1) };
-      expect(run({ MOCK_CHART: JSON.stringify(windowed), HISTORY_RANGE: '1y' }).exitCode).toBe(0);
+      expect(run({ MOCK_CHART: JSON.stringify(windowed), MOCK_LISTED: String(full.timestamp[0]), HISTORY_RANGE: '1y' }).exitCode).toBe(0);
       expect(files()).toEqual(first);
       expect(rewritten()).toEqual([]);
       // a truncated `max` answer (Yahoo served 2 bars for some funds on 2026-10-29) never shrinks the history either:
       // one that joins the published days keeps them all, one that does not join keeps the fund as published
-      expect(run({ MOCK_CHART: JSON.stringify(windowed) }).exitCode).toBe(0);
+      expect(run({ MOCK_CHART: JSON.stringify(windowed), MOCK_LISTED: String(full.timestamp[0]) }).exitCode).toBe(0);
       expect(files()).toEqual(first);
       const lone = { timestamp: [day(0)], close: [32], adjclose: [31] };
-      expect(run({ MOCK_CHART: JSON.stringify(lone) }).exitCode).toBe(0);
+      expect(run({ MOCK_CHART: JSON.stringify(lone), MOCK_LISTED: String(full.timestamp[0]) }).exitCode).toBe(0);
       expect(indexRows(files()).find((row) => row.ticker === 'PAPI').history).toBe(indexRows(first).find((row) => row.ticker === 'PAPI').history);
       expect(rewritten()).toEqual([]);
     });
