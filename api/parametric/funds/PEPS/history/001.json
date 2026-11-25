@@ -2,7 +2,7 @@
  "ticker": "PEPS",
  "page": 1,
  "pageSize": 1000,
- "totalRows": 400,
+ "totalRows": 402,
  "headers": [
   "Date",
   "Close",
@@ -2406,9 +2406,21 @@
   },
   {
    "Date": "Nov 20 2026",
-   "Close": "29.3447",
+   "Close": "29.344999",
    "Adj Close": "29.34",
-   "Volume": "202"
+   "Volume": "200"
+  },
+  {
+   "Date": "Nov 23 2026",
+   "Close": "30.978001",
+   "Adj Close": "30.98",
+   "Volume": "100"
+  },
+  {
+   "Date": "Nov 24 2026",
+   "Close": "30.846001",
+   "Adj Close": "30.85",
+   "Volume": "100"
   }
  ]
 }
