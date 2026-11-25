@@ -7,7 +7,7 @@
   "fundPage": "https://www.eatonvance.com/products/etfs/us-equity/parametric-hedged-equity-etf.html",
   "catalog": "https://www.eatonvance.com/products/etfs.html",
   "yahooChart": "https://query1.finance.yahoo.com/v8/finance/chart/PHEQ",
-  "holdingsSource": "SEC EDGAR Form N-PORT-P (accession 0002071691-26-018741, report period 2026-06-30)",
+  "holdingsSource": "SEC EDGAR Form N-PORT-P (accession 0002071691-26-027965, report period 2026-09-30)",
   "historySource": "Yahoo Finance public chart API (adjusted close)",
   "provider": "Eaton Vance / MSIM product data service (www.eatonvance.com/im/json/imwebdata) + SEC EDGAR (Form 497K fees and inception, Form N-PORT-P holdings, net assets and monthly NAV returns) + Yahoo Finance public chart API (market price, history and dividends)",
   "prospectus": null,
@@ -30,38 +30,38 @@
   "display": "0.29%",
   "grossDisplay": "0.29%",
   "netDisplay": "0.29%",
-  "asOf": "Nov 23 2026",
+  "asOf": "Nov 24 2026",
   "source": "official Eaton Vance / MSIM product data (net and gross expense ratio; terValue is the net ratio)"
  },
  "nav": {
-  "display": "$34.28",
-  "value": 34.2777,
-  "asOfDate": "2026-11-23",
+  "display": "$34.23",
+  "value": 34.2263,
+  "asOfDate": "2026-11-24",
   "source": "official Eaton Vance / MSIM product data (pricing)"
  },
  "marketPrice": {
-  "display": "$34.31",
-  "value": 34.31,
-  "asOfDate": "2026-11-23",
+  "display": "$34.20",
+  "value": 34.2,
+  "asOfDate": "2026-11-24",
   "source": "official Eaton Vance / MSIM product data (market price)"
  },
  "premiumDiscount": {
-  "display": "0.09%",
-  "value": 0.09,
-  "asOfDate": "2026-11-23",
+  "display": "-0.08%",
+  "value": -0.08,
+  "asOfDate": "2026-11-24",
   "source": "computed from the issuer NAV and market price of the same date",
-  "amount": 0.03
+  "amount": -0.03
  },
  "bidAskSpread": {
-  "display": "0.31%",
-  "value": 0.31,
-  "asOfDate": "2026-11-23",
+  "display": "0.30%",
+  "value": 0.3,
+  "asOfDate": "2026-11-24",
   "source": "official Eaton Vance / MSIM product data (median bid/ask spread)"
  },
  "aum": {
-  "display": "$145.68 M",
-  "value": 145680225,
-  "asOfDate": "Nov 23 2026",
+  "display": "$145.46 M",
+  "value": 145461775,
+  "asOfDate": "Nov 24 2026",
   "source": "derived: shares outstanding x NAV (the issuer publishes no net assets figure)"
  },
  "yields": {
@@ -172,18 +172,18 @@
    "holdings/001.json"
   ],
   "pageSize": 250,
-  "totalRows": 186,
-  "asOfDate": "2026-06-30",
-  "asOf": "Jun 30 2026",
-  "source": "SEC EDGAR Form N-PORT-P (accession 0002071691-26-018741, report period 2026-06-30)"
+  "totalRows": 187,
+  "asOfDate": "2026-09-30",
+  "asOf": "Sep 30 2026",
+  "source": "SEC EDGAR Form N-PORT-P (accession 0002071691-26-027965, report period 2026-09-30)"
  },
  "history": {
   "pages": [
    "history/001.json"
   ],
   "pageSize": 1000,
-  "totalRows": 778,
-  "asOf": "Nov 24 2026",
+  "totalRows": 779,
+  "asOf": "Nov 25 2026",
   "source": "Yahoo Finance public chart API (adjusted close)"
  }
 }

@@ -7,7 +7,7 @@
   "fundPage": "https://www.eatonvance.com/products/etfs/us-equity/parametric-equity-premium-income-etf.html",
   "catalog": "https://www.eatonvance.com/products/etfs.html",
   "yahooChart": "https://query1.finance.yahoo.com/v8/finance/chart/PAPI",
-  "holdingsSource": "SEC EDGAR Form N-PORT-P (accession 0002071691-26-018745, report period 2026-06-30)",
+  "holdingsSource": "SEC EDGAR Form N-PORT-P (accession 0002071691-26-027957, report period 2026-09-30)",
   "historySource": "Yahoo Finance public chart API (adjusted close)",
   "provider": "Eaton Vance / MSIM product data service (www.eatonvance.com/im/json/imwebdata) + SEC EDGAR (Form 497K fees and inception, Form N-PORT-P holdings, net assets and monthly NAV returns) + Yahoo Finance public chart API (market price, history and dividends)",
   "prospectus": null,
@@ -30,48 +30,48 @@
   "display": "0.29%",
   "grossDisplay": "0.29%",
   "netDisplay": "0.29%",
-  "asOf": "Nov 23 2026",
+  "asOf": "Nov 24 2026",
   "source": "official Eaton Vance / MSIM product data (net and gross expense ratio; terValue is the net ratio)"
  },
  "nav": {
-  "display": "$27.69",
-  "value": 27.6852,
-  "asOfDate": "2026-11-23",
+  "display": "$27.94",
+  "value": 27.944,
+  "asOfDate": "2026-11-24",
   "source": "official Eaton Vance / MSIM product data (pricing)"
  },
  "marketPrice": {
-  "display": "$27.68",
-  "value": 27.68,
-  "asOfDate": "2026-11-23",
+  "display": "$28.03",
+  "value": 28.03,
+  "asOfDate": "2026-11-24",
   "source": "official Eaton Vance / MSIM product data (market price)"
  },
  "premiumDiscount": {
-  "display": "-0.02%",
-  "value": -0.02,
-  "asOfDate": "2026-11-23",
+  "display": "0.31%",
+  "value": 0.31,
+  "asOfDate": "2026-11-24",
   "source": "computed from the issuer NAV and market price of the same date",
-  "amount": -0.01
+  "amount": 0.09
  },
  "bidAskSpread": {
   "display": "0.25%",
   "value": 0.25,
-  "asOfDate": "2026-11-23",
+  "asOfDate": "2026-11-24",
   "source": "official Eaton Vance / MSIM product data (median bid/ask spread)"
  },
  "aum": {
-  "display": "$568.93 M",
-  "value": 568930860,
-  "asOfDate": "Nov 23 2026",
+  "display": "$578.44 M",
+  "value": 578440800,
+  "asOfDate": "Nov 24 2026",
   "source": "derived: shares outstanding x NAV (the issuer publishes no net assets figure)"
  },
  "yields": {
-  "dividendYield": 7.05,
-  "dividendYieldText": "7.05%",
+  "dividendYield": 6.96,
+  "dividendYieldText": "6.96%",
   "dividendYieldBasis": "indicated",
   "dividendYieldKind": "indicated (latest distribution x payments per year / market price)",
-  "secYield": 2.82,
-  "secYieldText": "2.82%",
-  "secYieldKind": "30-day SEC yield as published by eatonvance.com, as of Nov 23 2026"
+  "secYield": 2.8,
+  "secYieldText": "2.80%",
+  "secYieldKind": "30-day SEC yield as published by eatonvance.com, as of Nov 24 2026"
  },
  "returns": {
   "derivedFrom": "official Eaton Vance / MSIM published returns; month-to-date and history-derived periods use the Yahoo Finance adjusted series",
@@ -268,18 +268,18 @@
    "holdings/001.json"
   ],
   "pageSize": 250,
-  "totalRows": 194,
-  "asOfDate": "2026-06-30",
-  "asOf": "Jun 30 2026",
-  "source": "SEC EDGAR Form N-PORT-P (accession 0002071691-26-018745, report period 2026-06-30)"
+  "totalRows": 192,
+  "asOfDate": "2026-09-30",
+  "asOf": "Sep 30 2026",
+  "source": "SEC EDGAR Form N-PORT-P (accession 0002071691-26-027957, report period 2026-09-30)"
  },
  "history": {
   "pages": [
    "history/001.json"
   ],
   "pageSize": 1000,
-  "totalRows": 778,
-  "asOf": "Nov 24 2026",
+  "totalRows": 779,
+  "asOf": "Nov 25 2026",
   "source": "Yahoo Finance public chart API (adjusted close)"
  }
 }
