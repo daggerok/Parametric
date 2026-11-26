@@ -30,38 +30,38 @@
   "display": "0.10%",
   "grossDisplay": "0.29%",
   "netDisplay": "0.10%",
-  "asOf": "Nov 24 2026",
+  "asOf": "Nov 25 2026",
   "source": "official Eaton Vance / MSIM product data (net and gross expense ratio; terValue is the net ratio)"
  },
  "nav": {
-  "display": "$30.85",
-  "value": 30.8481,
-  "asOfDate": "2026-11-24",
+  "display": "$30.79",
+  "value": 30.794,
+  "asOfDate": "2026-11-25",
   "source": "official Eaton Vance / MSIM product data (pricing)"
  },
  "marketPrice": {
-  "display": "$30.85",
-  "value": 30.85,
-  "asOfDate": "2026-11-24",
+  "display": "$30.83",
+  "value": 30.83,
+  "asOfDate": "2026-11-25",
   "source": "official Eaton Vance / MSIM product data (market price)"
  },
  "premiumDiscount": {
-  "display": "0.01%",
-  "value": 0.01,
-  "asOfDate": "2026-11-24",
+  "display": "0.12%",
+  "value": 0.12,
+  "asOfDate": "2026-11-25",
   "source": "computed from the issuer NAV and market price of the same date",
-  "amount": 0
+  "amount": 0.04
  },
  "bidAskSpread": {
   "display": "0.37%",
   "value": 0.37,
-  "asOfDate": "2026-11-24",
+  "asOfDate": "2026-11-25",
   "source": "official Eaton Vance / MSIM product data (median bid/ask spread)"
  },
  "aum": {
-  "display": "$27.76 M",
-  "value": 27763320.85,
-  "asOfDate": "Nov 24 2026",
+  "display": "$27.71 M",
+  "value": 27714630.79,
+  "asOfDate": "Nov 25 2026",
   "source": "derived: shares outstanding x NAV (the issuer publishes no net assets figure)"
  },
  "yields": {
